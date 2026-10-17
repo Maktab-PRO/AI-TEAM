@@ -70,7 +70,7 @@ def jobs_payload(jobs=None):
     return {"total_count": len(jobs), "jobs": jobs}
 
 
-def make_opener(run=None, jobs=None):
+def make_opener(run=None, jobs=None, branch=None):
     calls = []
 
     def opener(request, timeout=10):
@@ -80,6 +80,12 @@ def make_opener(run=None, jobs=None):
             return FakeResponse(jobs if jobs is not None else jobs_payload())
         if url.endswith("/actions/runs/123456"):
             return FakeResponse(run if run is not None else run_payload())
+        if "/branches/ai-team%2Fgithub-evidence" in url:
+            branch_result = branch if branch is not None else {
+                "name": "ai-team/github-evidence",
+                "commit": {"sha": HEAD_SHA},
+            }
+            return FakeResponse(branch_result)
         raise AssertionError(f"Unexpected GitHub API URL: {url}")
 
     return opener, calls
@@ -106,7 +112,7 @@ def test_verifier_records_ci_and_test_evidence_only_after_github_api_success(sys
     assert all(item["trusted"] is True for item in evidence)
     assert all(item["verified_by"] == "github-actions-api" for item in evidence)
     assert all(item["source"] == "github_actions" for item in evidence)
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert all(headers.get("Authorization") == "Bearer read-only-test-token" for _, headers, _ in calls)
 
 
@@ -253,6 +259,28 @@ def test_verifier_rejects_workflow_path_not_in_allowlist(system):
     )
 
     with pytest.raises(EvidenceRejected, match="not approved"):
+        verifier.verify_and_record(task["id"], run_url=RUN_URL, actor="ci-verifier")
+
+    assert store.list_evidence(task["id"]) == []
+
+
+
+def test_verifier_rejects_successful_run_when_task_branch_has_moved(system):
+    _, store, _, service = system
+    task = task_for(service, key="github-stale-current-branch")
+    moved_branch = {
+        "name": "ai-team/github-evidence",
+        "commit": {"sha": "b" * 40},
+    }
+    opener, _ = make_opener(branch=moved_branch)
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "read-only-test-token",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=opener,
+    )
+
+    with pytest.raises(EvidenceRejected, match="branch no longer points to this run's head SHA"):
         verifier.verify_and_record(task["id"], run_url=RUN_URL, actor="ci-verifier")
 
     assert store.list_evidence(task["id"]) == []
