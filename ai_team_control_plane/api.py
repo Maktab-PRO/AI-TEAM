@@ -16,6 +16,7 @@ from .registry import ProjectRegistry
 from .database import create_store
 from .integrations.github_evidence import GitHubActionsEvidenceVerifier
 from .integrations.github_review import GitHubPullRequestReviewVerifier
+from .integrations.render_health import RenderHealthEvidenceVerifier
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -316,6 +317,52 @@ def safe_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="Unexpected control-plane error.")
 
 
+def _render_health_allowlist() -> dict[str, dict[str, str]]:
+    raw = os.getenv("AI_TEAM_RENDER_HEALTH_ALLOWLIST", "").strip()
+    if not raw:
+        raise HTTPException(
+            status_code=503,
+            detail="Render health verifier needs an explicit AI_TEAM_RENDER_HEALTH_ALLOWLIST.",
+        )
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="AI_TEAM_RENDER_HEALTH_ALLOWLIST must be a JSON object mapping project IDs to health target settings.",
+        ) from exc
+    if not isinstance(value, dict) or not value:
+        raise HTTPException(status_code=503, detail="AI_TEAM_RENDER_HEALTH_ALLOWLIST must be a non-empty JSON object.")
+
+    result: dict[str, dict[str, str]] = {}
+    for project_id, target in value.items():
+        project = registry.get(project_id) if isinstance(project_id, str) else None
+        if project is None or project.status != "active":
+            raise HTTPException(status_code=503, detail=f"Render health target references unknown or inactive project ID: {project_id!r}.")
+        if not isinstance(target, dict):
+            raise HTTPException(status_code=503, detail=f"Render health target for {project_id!r} must be an object.")
+        url = target.get("url")
+        expected_service = target.get("expected_service")
+        expected_status = target.get("expected_status", "ok")
+        if (
+            not isinstance(url, str)
+            or not isinstance(expected_service, str)
+            or not isinstance(expected_status, str)
+            or not url
+            or not expected_service
+            or not expected_status
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail=f"Render health target for {project_id!r} needs url, expected_service, and expected_status.",
+            )
+        result[project_id] = {
+            "url": url,
+            "expected_service": expected_service,
+            "expected_status": expected_status,
+        }
+    return result
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     chain = store.verify_audit_chain()
@@ -487,6 +534,23 @@ def verify_github_pull_request_review(
     try:
         verifier = GitHubPullRequestReviewVerifier(orchestrator, registry, token=token)
         return verifier.verify_and_record(task_id, pull_url=body.pull_url, actor=actor)
+    except Exception as exc:
+        raise safe_error(exc) from exc
+
+
+@app.post("/tasks/{task_id}/evidence/render-health")
+def verify_render_health_evidence(
+    request: Request,
+    task_id: str,
+    actor: str = Depends(require_permission("tasks.evidence")),
+) -> dict:
+    _require_task_scope(request, task_id)
+    try:
+        verifier = RenderHealthEvidenceVerifier(
+            orchestrator,
+            _render_health_allowlist(),
+        )
+        return verifier.verify_and_record(task_id, actor=actor)
     except Exception as exc:
         raise safe_error(exc) from exc
 
