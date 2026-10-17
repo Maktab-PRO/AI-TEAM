@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from ai_team_control_plane import api
@@ -6,7 +7,7 @@ from ai_team_control_plane import api
 def setup_api(monkeypatch, system):
     registry, store, guard, orchestrator = system
     monkeypatch.setenv("APP_ENV", "development")
-    for name in ("AI_TEAM_API_TOKEN", "AI_TEAM_API_TOKENS", "AI_TEAM_API_ACTOR", "AI_TEAM_API_ROLE", "AI_TEAM_API_PROJECTS"):
+    for name in ("AI_TEAM_API_TOKEN", "AI_TEAM_API_TOKENS", "AI_TEAM_API_ACTOR", "AI_TEAM_API_ROLE", "AI_TEAM_API_PROJECTS", "AI_TEAM_GITHUB_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(api, "registry", registry)
     monkeypatch.setattr(api, "store", store)
@@ -339,3 +340,90 @@ def test_production_legacy_identity_only_token_map_fails_closed(monkeypatch, sys
     monkeypatch.setenv("AI_TEAM_API_TOKENS", __import__("json").dumps({token: "legacy-actor"}))
     response = client.get("/projects", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 503
+
+
+def test_github_actions_endpoint_uses_configured_verifier_and_records_only_server_result(monkeypatch, system):
+    client = setup_api(monkeypatch, system)
+    created = client.post(
+        "/tasks",
+        json=valid_task_payload(),
+        headers={"X-Actor": "api-test", "Idempotency-Key": "github-actions-endpoint"},
+    )
+    assert created.status_code == 201, created.text
+    task_id = created.json()["id"]
+    monkeypatch.setenv("AI_TEAM_GITHUB_TOKEN", "fake-secret-token")
+
+    called = {}
+
+    class FakeVerifier:
+        def __init__(self, service, token):
+            called["service"] = service
+            called["token"] = token
+
+        def verify_and_record(self, task_id, *, run_url, actor):
+            called.update({"task_id": task_id, "run_url": run_url, "actor": actor})
+            return {"task_id": task_id, "recorded_kinds": ["tests_passed", "ci_passed"]}
+
+    monkeypatch.setattr(api, "GitHubActionsEvidenceVerifier", FakeVerifier)
+    response = client.post(
+        f"/tasks/{task_id}/evidence/github-actions",
+        json={"run_url": "https://github.com/Maktab-PRO/Axsikent-IT/actions/runs/123456"},
+        headers={"X-Actor": "api-test"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["recorded_kinds"] == ["tests_passed", "ci_passed"]
+    assert called["token"] == "fake-secret-token"
+    assert called["task_id"] == task_id
+    assert called["actor"] == "api-test"
+
+
+def test_github_actions_endpoint_fails_closed_without_token(monkeypatch, system):
+    client = setup_api(monkeypatch, system)
+    created = client.post(
+        "/tasks",
+        json=valid_task_payload(),
+        headers={"X-Actor": "api-test", "Idempotency-Key": "github-actions-no-token"},
+    )
+    task_id = created.json()["id"]
+    response = client.post(
+        f"/tasks/{task_id}/evidence/github-actions",
+        json={"run_url": "https://github.com/Maktab-PRO/Axsikent-IT/actions/runs/123456"},
+        headers={"X-Actor": "api-test"},
+    )
+    assert response.status_code == 503
+    assert "AI_TEAM_GITHUB_TOKEN" in response.json()["detail"]
+
+
+def test_github_actions_endpoint_enforces_project_scope_before_verifier(monkeypatch, system):
+    client = setup_api(monkeypatch, system)
+    created = client.post(
+        "/tasks",
+        json=valid_task_payload(
+            project_id="technikum-digital-platform",
+            repository="Maktab-PRO/TECHNIKUM-DIGITAL-PLATFORM",
+        ),
+        headers={"X-Actor": "api-test", "Idempotency-Key": "github-actions-cross-scope"},
+    )
+    assert created.status_code == 201, created.text
+    task_id = created.json()["id"]
+    token = "scoped-ci-worker-secret-token-0123456789"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv(
+        "AI_TEAM_API_TOKENS",
+        __import__("json").dumps({
+            token: {"actor": "axsikent-worker", "role": "worker", "projects": ["axsikent-it"]},
+        }),
+    )
+    monkeypatch.setenv("AI_TEAM_GITHUB_TOKEN", "fake-github-token")
+    monkeypatch.setattr(
+        api,
+        "GitHubActionsEvidenceVerifier",
+        lambda *_args, **_kwargs: pytest.fail("verifier must not be constructed for cross-project task access"),
+    )
+    response = client.post(
+        f"/tasks/{task_id}/evidence/github-actions",
+        json={"run_url": "https://github.com/Maktab-PRO/TECHNIKUM-DIGITAL-PLATFORM/actions/runs/123456"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
