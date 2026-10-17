@@ -10,7 +10,7 @@ The control plane is designed to make project boundaries and completion rules en
 2. **Boundary Guard** — checks project↔repository match, active project status, safe relative paths, and feature-branch-only writes. Production deployments, merges, secret rotation, and database restoration are deny-by-default.
 3. **Task Orchestrator** — persists task states, enforces legal transitions, blocks cross-project dependencies, re-checks current project boundaries on writes, checks prerequisites, and reclaims expired leases without losing in-progress state.
 4. **Evidence Gate** — only accepts completion when each task-type policy has passing, trusted evidence from an approved verifier source. Public API submissions are deliberately untrusted; merely writing `status=passed` is not proof.
-5. **Durable State** — SQLite transactions, foreign keys, WAL, full synchronous writes, idempotency keys, an outbox, dependency relationships, and worker leases.
+5. **Durable State** — local SQLite transactions/WAL or a PostgreSQL backend with row locks, serialized audit-chain writes, idempotency-key locks, an outbox, dependency relationships, and worker leases. PostgreSQL becomes active when `DATABASE_URL` is set.
 6. **Audit Log** — append-only events chained with versioned SHA-256 hashes. Version 2 binds the task_id column and event content; legacy version-1 events remain verifiable but do not retroactively bind that column.
 
 ## Current safety boundaries
@@ -43,12 +43,13 @@ python -m ai_team_control_plane.cli serve
 python -m ai_team_control_plane.cli publish-outbox --limit 50
 ```
 
-The API binds to `127.0.0.1:8000` by default. OpenAPI UI is available locally at `/docs`. Development requests use `X-Actor`; task creation also requires an `Idempotency-Key`. In production, set `APP_ENV=production` and either a high-entropy `AI_TEAM_API_TOKEN` (32+ characters) with fixed `AI_TEAM_API_ACTOR`, or `AI_TEAM_API_TOKENS` as a JSON mapping of 32+ character tokens to fixed actor IDs. Production actor identity is derived from the matched token; a caller cannot override it with `X-Actor`. A shared-token identity is a service identity, not proof of a human identity. This MVP still lacks project-scoped RBAC, rate limits, and provider-backed identity; keep it private until these and TLS plus production database operations are in place.
+The API binds to `127.0.0.1:8000` by default. Local development uses SQLite unless `DATABASE_URL` points to a dedicated AI TEAM PostgreSQL database. PostgreSQL operations use row locks and per-key advisory locks for claims, idempotency, schema initialization, and audit-chain serialization. OpenAPI UI is available locally at `/docs`. Development requests use `X-Actor`; task creation also requires an `Idempotency-Key`. In production, set `APP_ENV=production` and either a high-entropy `AI_TEAM_API_TOKEN` (32+ characters) with fixed `AI_TEAM_API_ACTOR`, or `AI_TEAM_API_TOKENS` as a JSON mapping of 32+ character tokens to fixed actor IDs. Production actor identity is derived from the matched token; a caller cannot override it with `X-Actor`. A shared-token identity is a service identity, not proof of a human identity. This MVP still lacks project-scoped RBAC, rate limits, and provider-backed identity; keep it private until these and TLS plus production database operations are in place.
 
 ## Configuration
 
 - `AI_TEAM_REGISTRY_PATH`: registry JSON path; defaults to `config/projects.json`.
-- `AI_TEAM_DB_PATH`: durable SQLite file path; defaults to `data/ai-team.sqlite3`.
+- `DATABASE_URL`: optional PostgreSQL connection URL. When set, PostgreSQL is used instead of SQLite; point it only to a dedicated AI TEAM database, never the Axsikent or Technikum databases.
+- `AI_TEAM_DB_PATH`: durable SQLite file path used only when `DATABASE_URL` is empty; defaults to `data/ai-team.sqlite3`.
 - `AI_TEAM_API_TOKEN`: optional in development; in production, a single high-entropy bearer token (32+ characters) paired with `AI_TEAM_API_ACTOR`.
 - `AI_TEAM_API_ACTOR`: fixed audit identity for the single-token production mode; default `api-token`.
 - `AI_TEAM_API_TOKENS`: optional production JSON object mapping distinct 32+ character bearer tokens to actor IDs. Store only in a secret manager/environment, never source control.
@@ -73,4 +74,4 @@ The API binds to `127.0.0.1:8000` by default. OpenAPI UI is available locally at
 
 ## Development rule
 
-**One stage → deep inspection → narrow fix → focused tests → full CI → next stage.** Do not bind AI TEAM to any existing product repository. First create a dedicated `Maktab-PRO/AI-TEAM` (or another explicitly chosen name) repository, then register it under the `ai-team-control-plane` ID. Keep each project boundary exact and testable.
+**One stage → deep inspection → narrow fix → focused tests → full CI → next stage.** Do not bind AI TEAM to any existing product repository. The dedicated `Maktab-PRO/AI-TEAM` repository is now registered under `ai-team-control-plane`. For production, configure a separate PostgreSQL database using `DATABASE_URL`, run the PostgreSQL integration and backup/restore CI checks, and keep the API private until project-scoped RBAC, provider-backed identity/evidence, rate limits, TLS, and operational recovery are addressed. Keep each project boundary exact and testable.
