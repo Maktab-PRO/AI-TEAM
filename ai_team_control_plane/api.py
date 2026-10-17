@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -67,19 +68,59 @@ def authenticated_actor(
     authorization: str | None = Header(default=None),
     x_actor: str | None = Header(default=None, alias="X-Actor"),
 ) -> str:
-    environment = os.getenv("APP_ENV", "development").lower()
-    token = os.getenv("AI_TEAM_API_TOKEN", "")
-    if environment == "production" and len(token) < 32:
-        raise HTTPException(status_code=503, detail="Production API is disabled until AI_TEAM_API_TOKEN is set to a strong token (32+ chars).")
-    if token:
-        supplied = authorization.removeprefix("Bearer ") if authorization else ""
-        if not hmac.compare_digest(supplied, token):
+    environment = os.getenv("APP_ENV", "development").strip().lower()
+    supplied = authorization.removeprefix("Bearer ") if authorization else ""
+
+    if environment == "production":
+        # Prefer distinct opaque tokens mapped to fixed actor IDs. X-Actor is not an authentication claim.
+        credentials: dict[str, str] = {}
+        token_map_raw = os.getenv("AI_TEAM_API_TOKENS", "").strip()
+        if token_map_raw:
+            try:
+                token_map = json.loads(token_map_raw)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(status_code=503, detail="AI_TEAM_API_TOKENS must be a JSON object mapping tokens to actor IDs.") from exc
+            if not isinstance(token_map, dict) or not token_map:
+                raise HTTPException(status_code=503, detail="AI_TEAM_API_TOKENS must be a non-empty JSON object.")
+            for candidate, identity in token_map.items():
+                if not isinstance(candidate, str) or candidate != candidate.strip() or len(candidate) < 32 or not isinstance(identity, str):
+                    raise HTTPException(status_code=503, detail="Each production API token must be an exact 32+ character string and map to an actor ID.")
+                identity = identity.strip()
+                if not identity or len(identity) > 120 or any(ord(ch) < 32 for ch in identity):
+                    raise HTTPException(status_code=503, detail="Each production API token must map to a valid actor ID (1–120 characters).")
+                credentials[candidate] = identity
+
+        single_token = os.getenv("AI_TEAM_API_TOKEN", "").strip()
+        if single_token:
+            if len(single_token) < 32:
+                raise HTTPException(status_code=503, detail="AI_TEAM_API_TOKEN must be at least 32 characters in production.")
+            single_actor = os.getenv("AI_TEAM_API_ACTOR", "api-token").strip()
+            if not single_actor or len(single_actor) > 120 or any(ord(ch) < 32 for ch in single_actor):
+                raise HTTPException(status_code=503, detail="AI_TEAM_API_ACTOR must be a valid fixed service identity in production.")
+            existing = credentials.get(single_token)
+            if existing is not None and existing != single_actor:
+                raise HTTPException(status_code=503, detail="The same production token cannot map to multiple actor identities.")
+            credentials[single_token] = single_actor
+
+        if not credentials:
+            raise HTTPException(status_code=503, detail="Production API needs AI_TEAM_API_TOKENS or a strong AI_TEAM_API_TOKEN.")
+        matched_actor = None
+        for candidate, identity in credentials.items():
+            if hmac.compare_digest(supplied, candidate):
+                matched_actor = identity
+        if matched_actor is None:
             raise HTTPException(status_code=401, detail="Valid Bearer token required.")
-    elif environment == "production":
-        raise HTTPException(status_code=503, detail="Production API token is not configured.")
+        supplied_actor = (x_actor or "").strip()
+        if supplied_actor and supplied_actor != matched_actor:
+            raise HTTPException(status_code=403, detail="X-Actor cannot override the identity mapped to the production bearer token.")
+        return matched_actor
+
+    token = os.getenv("AI_TEAM_API_TOKEN", "").strip()
+    if token and not hmac.compare_digest(supplied, token):
+        raise HTTPException(status_code=401, detail="Valid Bearer token required.")
     actor = (x_actor or "").strip()
     if not actor:
-        raise HTTPException(status_code=400, detail="X-Actor header is required for traceability.")
+        raise HTTPException(status_code=400, detail="X-Actor header is required for traceability in development.")
     return actor
 
 
@@ -147,7 +188,9 @@ def get_task(task_id: str, _: str = Depends(authenticated_actor)) -> dict:
 @app.post("/tasks/{task_id}/claim")
 def claim_task(task_id: str, body: ClaimTask, actor: str = Depends(authenticated_actor)) -> dict:
     try:
-        return orchestrator.claim_task(task_id, worker_id=body.worker_id, lease_seconds=body.lease_seconds, actor=actor)
+        # In production, bind lease ownership to the authenticated token identity.
+        worker_id = actor if os.getenv("APP_ENV", "development").strip().lower() == "production" else body.worker_id
+        return orchestrator.claim_task(task_id, worker_id=worker_id, lease_seconds=body.lease_seconds, actor=actor)
     except Exception as exc:
         raise safe_error(exc) from exc
 

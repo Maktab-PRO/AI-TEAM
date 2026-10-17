@@ -19,7 +19,8 @@ _TRANSITIONS = {
     "queued": {"claimed", "cancelled"},
     "claimed": {"in_progress", "queued", "blocked", "cancelled"},
     "in_progress": {"blocked", "queued", "evidence_pending", "cancelled"},
-    "blocked": {"queued", "in_progress", "cancelled"},
+    # A blocked task must be requeued and claimed before work resumes, restoring lease ownership.
+    "blocked": {"queued", "cancelled"},
     "evidence_pending": {"in_progress", "verified", "rejected"},
     "rejected": {"in_progress", "cancelled"},
     "verified": set(),
@@ -43,6 +44,16 @@ class TaskOrchestrator:
         self.store = store
         self.guard = guard
         self.gate = EvidenceGate(store)
+
+    def _authorize_task_row(self, row) -> None:
+        """Re-check current project policy before any state-changing operation."""
+        self.guard.authorize(
+            project_id=row["project_id"],
+            repository=row["repository"],
+            branch=row["branch"],
+            paths=json.loads(row["paths_json"]),
+            action="write",
+        )
 
     def create_task(
         self,
@@ -123,12 +134,13 @@ class TaskOrchestrator:
             row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if row is None:
                 raise KeyError(f"Unknown task ID: {task_id}")
+            self._authorize_task_row(row)
             status = row["status"]
             lease_expired = not row["lease_until"] or row["lease_until"] <= now
-            if status == "claimed" and row["lease_owner"] != worker_id and not lease_expired:
+            if status in {"claimed", "in_progress"} and row["lease_owner"] != worker_id and not lease_expired:
                 raise StateConflict(f"Task is leased by another worker until {row['lease_until']}.")
-            if status not in {"queued", "claimed"}:
-                raise StateConflict(f"Only queued or expired-lease claimed tasks can be claimed; current status is {status}.")
+            if status not in {"queued", "claimed", "in_progress"}:
+                raise StateConflict(f"Only queued tasks or tasks with a missing/expired lease can be claimed; current status is {status}.")
             deps = conn.execute(
                 "SELECT t.id, t.status FROM task_dependencies d JOIN tasks t ON t.id=d.depends_on_task_id WHERE d.task_id=?",
                 (task_id,),
@@ -137,13 +149,20 @@ class TaskOrchestrator:
             if unready:
                 raise StateConflict("Dependency gate: prerequisite tasks are not verified: " + ", ".join(unready))
             old_status = status
+            new_status = "in_progress" if status == "in_progress" else "claimed"
             conn.execute(
-                "UPDATE tasks SET status='claimed',lease_owner=?,lease_until=?,version=version+1,updated_at=? WHERE id=?",
-                (worker_id, lease_until, now, task_id),
+                "UPDATE tasks SET status=?,lease_owner=?,lease_until=?,version=version+1,updated_at=? WHERE id=?",
+                (new_status, worker_id, lease_until, now, task_id),
             )
-            payload = {"task_id": task_id, "from": old_status, "to": "claimed", "worker_id": worker_id, "lease_until": lease_until}
-            self.store.append_audit(conn, actor, "task.claimed", payload, task_id)
-            self.store.append_outbox(conn, task_id, "task.claimed", payload)
+            if status == "in_progress" and (lease_expired or row["lease_owner"] != worker_id):
+                event_type = "task.lease_reclaimed"
+            elif status in {"claimed", "in_progress"} and not lease_expired:
+                event_type = "task.lease_renewed"
+            else:
+                event_type = "task.claimed"
+            payload = {"task_id": task_id, "from": old_status, "to": new_status, "worker_id": worker_id, "lease_until": lease_until}
+            self.store.append_audit(conn, actor, event_type, payload, task_id)
+            self.store.append_outbox(conn, task_id, event_type, payload)
         return self.store.get_task(task_id)
 
     def transition(
@@ -167,6 +186,7 @@ class TaskOrchestrator:
             row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
             if row is None:
                 raise KeyError(f"Unknown task ID: {task_id}")
+            self._authorize_task_row(row)
             current = row["status"]
             if expected_version is not None and row["version"] != expected_version:
                 raise StateConflict(
@@ -176,10 +196,14 @@ class TaskOrchestrator:
                 raise StateConflict(f"Illegal status transition: {current} -> {target.value}.")
             if target == TaskStatus.CLAIMED:
                 raise StateConflict("Use claim_task so lease ownership is recorded atomically.")
-            if row["lease_owner"] and current in {"claimed", "in_progress"} and actor != row["lease_owner"]:
-                raise StateConflict(
-                    f"Task is leased by '{row['lease_owner']}'; that worker must make the transition or release the lease."
-                )
+            if current in {"claimed", "in_progress"}:
+                lease_until = row["lease_until"]
+                if not row["lease_owner"] or not lease_until or lease_until <= now:
+                    raise StateConflict("Task lease is missing or expired; reclaim the task before changing its state.")
+                if actor != row["lease_owner"]:
+                    raise StateConflict(
+                        f"Task is leased by '{row['lease_owner']}'; that worker must make the transition or release the lease."
+                    )
             if target == TaskStatus.IN_PROGRESS:
                 conn.execute(
                     "UPDATE tasks SET status=?,version=version+1,updated_at=? WHERE id=?",
@@ -220,9 +244,10 @@ class TaskOrchestrator:
         evidence_id = str(uuid.uuid4())
         now = utc_now()
         with self.store.transaction() as conn:
-            row = conn.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
+            row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
             if row is None:
                 raise KeyError(f"Unknown task ID: {task_id}")
+            self._authorize_task_row(row)
             if row["status"] in {"verified", "cancelled"}:
                 raise StateConflict(f"Evidence cannot be changed on a {row['status']} task.")
             conn.execute(
@@ -254,9 +279,10 @@ class TaskOrchestrator:
         actor = _clean_actor(actor)
         now = utc_now()
         with self.store.transaction() as conn:
-            row = conn.execute("SELECT status,version FROM tasks WHERE id=?", (task_id,)).fetchone()
+            row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
             if row is None:
                 raise KeyError(f"Unknown task ID: {task_id}")
+            self._authorize_task_row(row)
             if row["status"] != "evidence_pending":
                 raise StateConflict("Task must be evidence_pending before Evidence Gate can verify it.")
             # Check evidence after taking the write lock to avoid a check/update race.

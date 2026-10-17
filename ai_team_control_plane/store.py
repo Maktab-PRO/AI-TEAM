@@ -102,7 +102,8 @@ class DurableStore:
                     payload_json TEXT NOT NULL,
                     prev_hash TEXT NOT NULL,
                     event_hash TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    hash_version INTEGER NOT NULL DEFAULT 1 CHECK (hash_version IN (1,2))
                 );
 
                 CREATE TABLE IF NOT EXISTS outbox (
@@ -127,6 +128,12 @@ class DurableStore:
                 END;
                 """
             )
+            # Keep existing v1 hashes readable while new records use v2.
+            audit_columns = {row[1] for row in conn.execute("PRAGMA table_info(audit_events)").fetchall()}
+            if "hash_version" not in audit_columns:
+                conn.execute(
+                    "ALTER TABLE audit_events ADD COLUMN hash_version INTEGER NOT NULL DEFAULT 1 CHECK (hash_version IN (1,2))"
+                )
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -144,11 +151,13 @@ class DurableStore:
         previous_hash = prior["event_hash"] if prior else ZERO_HASH
         payload_json = canonical_json(payload)
         created_at = utc_now()
-        material = "\n".join((previous_hash, actor, event_type, payload_json, created_at))
+        # v2 binds the audit row's task_id column into the hash.
+        hash_version = 2
+        material = "\n".join((previous_hash, task_id or "", actor, event_type, payload_json, created_at))
         event_hash = hashlib.sha256(material.encode("utf-8")).hexdigest()
         conn.execute(
-            "INSERT INTO audit_events(task_id, actor, event_type, payload_json, prev_hash, event_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (task_id, actor, event_type, payload_json, previous_hash, event_hash, created_at),
+            "INSERT INTO audit_events(task_id, actor, event_type, payload_json, prev_hash, event_hash, created_at, hash_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, actor, event_type, payload_json, previous_hash, event_hash, created_at, hash_version),
         )
 
     def append_outbox(self, conn: sqlite3.Connection, aggregate_id: str, event_type: str, payload: dict) -> None:
@@ -205,7 +214,14 @@ class DurableStore:
             rows = conn.execute("SELECT * FROM audit_events ORDER BY id").fetchall()
         for row in rows:
             expected_prev = previous_hash
-            material = "\n".join((expected_prev, row["actor"], row["event_type"], row["payload_json"], row["created_at"]))
+            hash_version = row["hash_version"] if "hash_version" in row.keys() else 1
+            if hash_version == 1:
+                # Compatibility for records created before task_id was included in the hash.
+                material = "\n".join((expected_prev, row["actor"], row["event_type"], row["payload_json"], row["created_at"]))
+            elif hash_version == 2:
+                material = "\n".join((expected_prev, row["task_id"] or "", row["actor"], row["event_type"], row["payload_json"], row["created_at"]))
+            else:
+                return {"valid": False, "checked_events": total, "failed_event_id": row["id"], "reason": "unsupported_hash_version"}
             expected_hash = hashlib.sha256(material.encode("utf-8")).hexdigest()
             if row["prev_hash"] != expected_prev or row["event_hash"] != expected_hash:
                 return {"valid": False, "checked_events": total, "failed_event_id": row["id"], "reason": "hash_or_previous_hash_mismatch"}

@@ -6,11 +6,11 @@
 
 ## 2. Boundary Guard
 
-**Invariant:** task project ID and repository must match exactly. Mutating tasks must target a non-protected branch with an approved prefix. Relative paths may not traverse outside the repo or reach secret/key/CI-control paths. Destructive/external actions are denied until a separate approval/execution capability is implemented.
+**Invariant:** task project ID and repository must match exactly. Repository uniqueness is case-insensitive. Mutating tasks must target a non-protected branch with an approved prefix, and current project policy is rechecked before claim, transition, evidence write, or verification. Relative paths may not traverse outside the repo or reach secret/key/CI-control paths. Destructive/external actions are denied until a separate approval/execution capability is implemented.
 
 ## 3. Task Orchestrator
 
-**Invariant:** all states go through the transition table. Each task has an idempotency key; reuse with the same request returns the original task, while reuse with a different request is a conflict. Dependencies are intra-project and must be verified before claim. Leases are stored transactionally and have bounded expiry.
+**Invariant:** all states go through the transition table. Each task has an idempotency key; reuse with the same request returns the original task, while reuse with a different request is a conflict. Dependencies are intra-project and must be verified before claim. Leases are stored transactionally and have bounded expiry; an expired/missing lease cannot transition state until reclaimed. A blocked task must be requeued and claimed before work resumes.
 
 ## 4. Evidence Gate
 
@@ -22,7 +22,7 @@
 
 ## 6. Audit Log
 
-**Invariant:** every material task/evidence state change writes an audit event in the same transaction. Events are canonicalized and linked with SHA-256 hashes. The verify endpoint reports the first mismatch; a passing chain signals integrity since the last trusted checkpoint, not proof that the original actor was honest.
+**Invariant:** every material task/evidence state change writes an audit event in the same transaction. Events are canonicalized and linked with versioned SHA-256 hashes. Version 2 covers the task_id column and event content; legacy version-1 events remain readable but did not bind that column. A passing chain signals integrity since the last trusted checkpoint, not proof that the original actor was honest.
 
 ## Non-goals of milestone 0.1
 
@@ -30,4 +30,4 @@
 - No provider API evidence verification yet.
 - No production deployment, PR merge, destructive database operation, or secret management.
 - No live Notion sync or Redis daemon management.
-- No claim that SQLite has been validated for concurrent multi-instance production.
+- No claim that SQLite has been validated for concurrent multi-instance production. Production bearer tokens map to fixed actor IDs, but project-/role-scoped RBAC, human identity, and rate limiting are not implemented; keep the service private.

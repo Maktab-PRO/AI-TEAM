@@ -195,3 +195,86 @@ def test_only_current_lease_owner_can_transition_work(system):
 def test_durable_store_refuses_ephemeral_memory_database():
     with pytest.raises(ValueError, match="file-backed database path"):
         DurableStore(":memory:")
+
+
+def test_expired_lease_must_be_reclaimed_before_transition(system):
+    _, store, _, service = system
+    task = create_task(service, idempotency_key="expired-lease-transition")
+    service.claim_task(task["id"], worker_id="worker-a", actor="worker-a", lease_seconds=60)
+    with store.transaction() as conn:
+        conn.execute("UPDATE tasks SET lease_until=? WHERE id=?", ("2000-01-01T00:00:00.000+00:00", task["id"]))
+    with pytest.raises(StateConflict, match="lease is missing or expired"):
+        service.transition(task["id"], "in_progress", actor="worker-a")
+    claimed = service.claim_task(task["id"], worker_id="worker-b", actor="worker-b", lease_seconds=60)
+    assert claimed["status"] == "claimed"
+    assert claimed["lease_owner"] == "worker-b"
+    progressed = service.transition(task["id"], "in_progress", actor="worker-b")
+    assert progressed["status"] == "in_progress"
+
+
+def test_expired_in_progress_lease_can_be_reclaimed_without_losing_state(system):
+    _, store, _, service = system
+    task = create_task(service, idempotency_key="expired-in-progress-lease")
+    service.claim_task(task["id"], worker_id="worker-a", actor="worker-a", lease_seconds=60)
+    service.transition(task["id"], "in_progress", actor="worker-a")
+    with store.transaction() as conn:
+        conn.execute("UPDATE tasks SET lease_until=? WHERE id=?", ("2000-01-01T00:00:00.000+00:00", task["id"]))
+    with pytest.raises(StateConflict, match="lease is missing or expired"):
+        service.transition(task["id"], "evidence_pending", actor="worker-a")
+    reclaimed = service.claim_task(task["id"], worker_id="worker-b", actor="worker-b", lease_seconds=60)
+    assert reclaimed["status"] == "in_progress"
+    assert reclaimed["lease_owner"] == "worker-b"
+    pending = service.request_verification(task["id"], actor="worker-b")
+    assert pending["status"] == "evidence_pending"
+
+
+def test_task_cannot_be_claimed_after_project_is_quarantined(system):
+    from dataclasses import replace
+    from ai_team_control_plane.models import BoundaryViolation
+
+    registry, _, _, service = system
+    task = create_task(service, idempotency_key="quarantine-after-creation")
+    project = registry.require("axsikent-it")
+    registry._projects[project.id] = replace(project, status="quarantined")
+    with pytest.raises(BoundaryViolation, match="not active"):
+        service.claim_task(task["id"], worker_id="worker-a", actor="worker-a")
+
+
+def test_audit_hash_detects_task_id_column_tampering(system):
+    _, store, _, service = system
+    task = create_task(service, idempotency_key="audit-task-id-binding")
+    assert store.verify_audit_chain()["valid"] is True
+    with store.transaction() as conn:
+        conn.execute("DROP TRIGGER audit_events_no_update")
+        conn.execute("UPDATE audit_events SET task_id=? WHERE task_id=?", ("tampered-task", task["id"]))
+    result = store.verify_audit_chain()
+    assert result["valid"] is False
+    assert result["failed_event_id"] == 1
+
+
+def test_existing_audit_chain_without_hash_version_migrates_as_v1(tmp_path):
+    import hashlib
+    from ai_team_control_plane.store import ZERO_HASH, canonical_json
+
+    db_path = tmp_path / "legacy.sqlite3"
+    payload_json = canonical_json({"legacy": True})
+    actor = "legacy-service"
+    event_type = "legacy.event"
+    created_at = "2026-01-01T00:00:00.000+00:00"
+    material = "\n".join((ZERO_HASH, actor, event_type, payload_json, created_at))
+    event_hash = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""CREATE TABLE audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, actor TEXT NOT NULL,
+            event_type TEXT NOT NULL, payload_json TEXT NOT NULL, prev_hash TEXT NOT NULL,
+            event_hash TEXT NOT NULL, created_at TEXT NOT NULL
+        )""")
+        conn.execute(
+            "INSERT INTO audit_events(task_id, actor, event_type, payload_json, prev_hash, event_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (None, actor, event_type, payload_json, ZERO_HASH, event_hash, created_at),
+        )
+    migrated = DurableStore(db_path)
+    assert migrated.verify_audit_chain()["valid"] is True
+    with migrated.connection() as conn:
+        version = conn.execute("SELECT hash_version FROM audit_events WHERE id=1").fetchone()[0]
+    assert version == 1

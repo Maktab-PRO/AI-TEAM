@@ -94,8 +94,18 @@ def test_production_api_requires_bearer_token(monkeypatch, system):
     monkeypatch.setenv("AI_TEAM_API_TOKEN", token)
     no_token = client.get("/projects", headers={"X-Actor": "api-test"})
     assert no_token.status_code == 401
-    authenticated = client.get("/projects", headers={"X-Actor": "api-test", "Authorization": f"Bearer {token}"})
+    authenticated = client.get("/projects", headers={"Authorization": f"Bearer {token}"})
     assert authenticated.status_code == 200
+    assert api.authenticated_actor(
+        request=None,
+        authorization=f"Bearer {token}",
+        x_actor="api-token",
+    ) == "api-token"
+    spoofed_actor = client.get(
+        "/projects",
+        headers={"X-Actor": "admin-impersonation", "Authorization": f"Bearer {token}"},
+    )
+    assert spoofed_actor.status_code == 403
 
 
 def test_api_uses_version_preconditions_and_preserves_worker_lease(monkeypatch, system):
@@ -135,3 +145,67 @@ def test_public_health_is_minimal_and_reports_audit_status(monkeypatch, system):
     assert response.status_code == 200
     assert response.json()["service"] == "ai-team-control-plane"
     assert response.json()["audit_chain_valid"] is True
+
+
+def test_production_api_actor_cannot_be_spoofed_and_is_pinned(monkeypatch, system):
+    setup_api(monkeypatch, system)
+    token = "production-secret-test-token-0123456789-abcdef"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("AI_TEAM_API_TOKEN", token)
+    monkeypatch.setenv("AI_TEAM_API_ACTOR", "ci-service")
+    client = TestClient(api.app)
+    response = client.get("/projects", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert api.authenticated_actor(None, f"Bearer {token}", "ci-service") == "ci-service"
+    impersonation = client.get(
+        "/projects",
+        headers={"Authorization": f"Bearer {token}", "X-Actor": "project-owner"},
+    )
+    assert impersonation.status_code == 403
+
+
+def test_production_token_map_binds_distinct_actor_identities(monkeypatch, system):
+    setup_api(monkeypatch, system)
+    token_a = "token-for-worker-a-0123456789-abcdef"
+    token_b = "token-for-reviewer-b-0123456789-abcdef"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("AI_TEAM_API_TOKEN", raising=False)
+    monkeypatch.setenv("AI_TEAM_API_TOKENS", __import__("json").dumps({token_a: "worker-a", token_b: "reviewer-b"}))
+    client = TestClient(api.app)
+    worker_response = client.get("/projects", headers={"Authorization": f"Bearer {token_a}"})
+    assert worker_response.status_code == 200
+    assert api.authenticated_actor(None, f"Bearer {token_a}", None) == "worker-a"
+    wrong_identity = client.get(
+        "/projects",
+        headers={"Authorization": f"Bearer {token_a}", "X-Actor": "reviewer-b"},
+    )
+    assert wrong_identity.status_code == 403
+
+
+def test_production_claim_uses_authenticated_actor_as_lease_owner(monkeypatch, system):
+    setup_api(monkeypatch, system)
+    token = "worker-identity-secret-0123456789-abcdef"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("AI_TEAM_API_TOKEN", token)
+    monkeypatch.setenv("AI_TEAM_API_ACTOR", "worker-a")
+    client = TestClient(api.app)
+    created = client.post(
+        "/tasks",
+        json=valid_task_payload(),
+        headers={"Authorization": f"Bearer {token}", "Idempotency-Key": "production-lease-bind"},
+    )
+    assert created.status_code == 201, created.text
+    task_id = created.json()["id"]
+    claimed = client.post(
+        f"/tasks/{task_id}/claim",
+        json={"worker_id": "spoofed-worker", "lease_seconds": 60},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["lease_owner"] == "worker-a"
+    progressed = client.post(
+        f"/tasks/{task_id}/transition",
+        json={"status": "in_progress", "expected_version": claimed.json()["version"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert progressed.status_code == 200, progressed.text

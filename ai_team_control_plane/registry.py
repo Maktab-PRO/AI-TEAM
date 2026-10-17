@@ -42,12 +42,21 @@ class ProjectRegistry:
             if project.status == "active" and not project.repository:
                 raise ValueError(f"Active project {project.id} must have an exact repository")
             if project.repository:
-                if project.repository in repositories:
+                repository = project.repository
+                parts = repository.split("/")
+                if (
+                    repository != repository.strip()
+                    or len(parts) != 2
+                    or any(not part or part != part.strip() for part in parts)
+                ):
+                    raise ValueError(f"Repository mapping must be an exact owner/name pair without whitespace: {repository!r}")
+                repository_key = repository.casefold()
+                if repository_key in repositories:
                     raise ValueError(
-                        f"Repository {project.repository!r} is mapped to both "
-                        f"{repositories[project.repository]!r} and {project.id!r}"
+                        f"Repository {repository!r} is mapped to both "
+                        f"{repositories[repository_key]!r} and {project.id!r} (repository names are case-insensitive)"
                     )
-                repositories[project.repository] = project.id
+                repositories[repository_key] = project.id
             built[project.id] = project
         self._projects = built
 

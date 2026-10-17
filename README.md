@@ -8,17 +8,16 @@ The control plane is designed to make project boundaries and completion rules en
 
 1. **Project Registry** — maps immutable project IDs to exact GitHub repository names; unknown/quarantined projects are denied.
 2. **Boundary Guard** — checks project↔repository match, active project status, safe relative paths, and feature-branch-only writes. Production deployments, merges, secret rotation, and database restoration are deny-by-default.
-3. **Task Orchestrator** — persists task states, enforces legal state transitions, blocks cross-project dependencies, checks prerequisites, and grants time-limited worker leases.
+3. **Task Orchestrator** — persists task states, enforces legal transitions, blocks cross-project dependencies, re-checks current project boundaries on writes, checks prerequisites, and reclaims expired leases without losing in-progress state.
 4. **Evidence Gate** — only accepts completion when each task-type policy has passing, trusted evidence from an approved verifier source. Public API submissions are deliberately untrusted; merely writing `status=passed` is not proof.
 5. **Durable State** — SQLite transactions, foreign keys, WAL, full synchronous writes, idempotency keys, an outbox, dependency relationships, and worker leases.
-6. **Audit Log** — append-only events chained with SHA-256 hashes; `/audit/verify` detects edits to historical events.
+6. **Audit Log** — append-only events chained with versioned SHA-256 hashes. Version 2 binds the task_id column and event content; legacy version-1 events remain verifiable but do not retroactively bind that column.
 
 ## Current safety boundaries
 
-- The GitHub account's known repositories are only registered here as candidates when their identity is known. A fourth discovered repository is **quarantined** until its owner and project purpose are confirmed.
-- `ai-team-control-plane` has `setup_required` and no repository mapped. It cannot schedule write tasks until a **dedicated AI TEAM repository** is created and the registry is updated in a reviewed change.
-- The first three registered repositories are exact mappings only. The Guard does not guess that a task can be moved into another repository.
-- `main`, `master`, and `production` are protected from direct writes. The initial allowed write branch prefixes are `ai-team/`, `codex/`, `feature/`, and `fix/`.
+- The registry has exact mappings for Axsikent IT, Technikum Digital Platform, the personal Telegram bot, and this dedicated AI TEAM repository. The discovered `Maktab-PRO/aqlli-mahalla-temirqishloq` repository remains **quarantined** until ownership and project boundaries are confirmed.
+- Every task is tied to one exact repository. Repository uniqueness is case-insensitive to match GitHub naming behavior; the Guard never guesses that a task can move to another project.
+- `main`, `master`, and `production` are protected from direct writes. For Axsikent, Technikum, and the Telegram bot, allowed write branch prefixes are `ai-team/`, `codex/`, `feature/`, and `fix/`; the AI TEAM repository is restricted to `ai-team/` branches.
 - `.env`/secret/key paths, `.git`, and `.github/workflows` are blocked by the initial policy. CI policy changes need a separate reviewed bootstrap step.
 - No production deploy, PR merge, database restore, secret rotation, repository deletion, or billing action can be triggered by this MVP.
 - This API does not claim to independently verify GitHub Actions or Render yet. The trusted-evidence interface is implemented; live provider verifier adapters are a later milestone. Until then Evidence Gate intentionally fails closed.
@@ -44,14 +43,16 @@ python -m ai_team_control_plane.cli serve
 python -m ai_team_control_plane.cli publish-outbox --limit 50
 ```
 
-The API binds to `127.0.0.1:8000` by default. OpenAPI UI is available locally at `/docs`. Mutating routes require `X-Actor` and an `Idempotency-Key` for task creation. In production, set `APP_ENV=production` and a high-entropy `AI_TEAM_API_TOKEN` at least 32 characters long; the API refuses to run its routes without it. Keep the API private until authentication, rate limits, TLS, and a deployment-ready database are configured.
+The API binds to `127.0.0.1:8000` by default. OpenAPI UI is available locally at `/docs`. Development requests use `X-Actor`; task creation also requires an `Idempotency-Key`. In production, set `APP_ENV=production` and either a high-entropy `AI_TEAM_API_TOKEN` (32+ characters) with fixed `AI_TEAM_API_ACTOR`, or `AI_TEAM_API_TOKENS` as a JSON mapping of 32+ character tokens to fixed actor IDs. Production actor identity is derived from the matched token; a caller cannot override it with `X-Actor`. A shared-token identity is a service identity, not proof of a human identity. This MVP still lacks project-scoped RBAC, rate limits, and provider-backed identity; keep it private until these and TLS plus production database operations are in place.
 
 ## Configuration
 
 - `AI_TEAM_REGISTRY_PATH`: registry JSON path; defaults to `config/projects.json`.
 - `AI_TEAM_DB_PATH`: durable SQLite file path; defaults to `data/ai-team.sqlite3`.
-- `AI_TEAM_API_TOKEN`: required for authenticated API calls when set; mandatory in production.
-- `APP_ENV`: `development` by default; set to `production` for the stricter token requirement.
+- `AI_TEAM_API_TOKEN`: optional in development; in production, a single high-entropy bearer token (32+ characters) paired with `AI_TEAM_API_ACTOR`.
+- `AI_TEAM_API_ACTOR`: fixed audit identity for the single-token production mode; default `api-token`.
+- `AI_TEAM_API_TOKENS`: optional production JSON object mapping distinct 32+ character bearer tokens to actor IDs. Store only in a secret manager/environment, never source control.
+- `APP_ENV`: `development` by default; production enables token-to-identity binding, not project-scoped authorization.
 - `REDIS_URL`: reserved for the deployment/worker integration step. Do not add credentials to Git.
 
 ## Endpoint map
