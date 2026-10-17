@@ -261,14 +261,16 @@ def _github_workflow_allowlist() -> dict[str, list[str]]:
         raise HTTPException(status_code=503, detail="AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST must be a non-empty JSON object.")
 
     result: dict[str, list[str]] = {}
+    seen_repositories: set[str] = set()
     for repository, paths in value.items():
         parts = repository.split("/") if isinstance(repository, str) else []
+        repository_key = repository.casefold() if isinstance(repository, str) else ""
         if (
             len(parts) != 2
             or any(not part or part != part.strip() for part in parts)
             or not isinstance(paths, list)
             or not paths
-            or repository.casefold() in result
+            or repository_key in seen_repositories
         ):
             raise HTTPException(
                 status_code=503,
@@ -288,6 +290,7 @@ def _github_workflow_allowlist() -> dict[str, list[str]]:
                     detail="Approved workflow paths must be unique safe paths under .github/workflows/.",
                 )
             clean_paths.append(path)
+        seen_repositories.add(repository_key)
         result[repository] = clean_paths
     return result
 
