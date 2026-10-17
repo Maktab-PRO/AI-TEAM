@@ -225,6 +225,21 @@ def test_verifier_rejects_task_types_without_review_requirement(system):
     assert store.list_evidence(task["id"]) == []
 
 
+
+
+def test_verifier_rejects_oversized_github_review_response(system):
+    _, store, _, service = system
+    task = task_for(service, key="github-review-oversized-response")
+
+    def opener(request, timeout=10):
+        if request.full_url.endswith("/pulls/42"):
+            return FakeResponse({"large": "x" * 2_100_000})
+        raise AssertionError("No API call beyond the oversized PR response should occur")
+
+    with pytest.raises(EvidenceRejected, match="exceeded the configured size limit"):
+        verifier(service, opener).verify_and_record(task["id"], pull_url=PULL_URL, actor="review-verifier")
+    assert store.list_evidence(task["id"]) == []
+
 def test_verifier_rejects_non_github_pull_url(system):
     _, _, _, service = system
     task = task_for(service, key="github-review-host-attack")
