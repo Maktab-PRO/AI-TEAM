@@ -21,6 +21,9 @@ class _CompatRow(dict):
 
 
 def _compat_row_factory(cursor):
+    # DDL and advisory-lock statements have no result columns/rows.
+    if cursor.description is None:
+        return lambda values: values
     names = [column.name for column in cursor.description]
 
     def make_row(values):
