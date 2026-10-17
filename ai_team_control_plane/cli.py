@@ -8,16 +8,15 @@ from pathlib import Path
 from .boundary import BoundaryGuard
 from .orchestrator import TaskOrchestrator
 from .registry import ProjectRegistry
-from .store import DurableStore
+from .database import create_store
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _setup():
     registry_path = Path(os.getenv("AI_TEAM_REGISTRY_PATH", ROOT / "config" / "projects.json"))
-    db_path = Path(os.getenv("AI_TEAM_DB_PATH", ROOT / "data" / "ai-team.sqlite3"))
     registry = ProjectRegistry(registry_path)
-    store = DurableStore(db_path)
+    store = create_store()
     guard = BoundaryGuard(registry)
     return registry, store, guard, TaskOrchestrator(store, guard)
 
