@@ -171,6 +171,17 @@ def test_render_health_rejects_arbitrary_path_and_local_host(system):
             check.verify_and_record(task["id"], actor="health-verifier")
 
 
+
+
+def test_render_health_rejects_oversized_response(system):
+    _, store, _, service = system
+    task = task_for(service, key="render-health-oversized-response")
+    check = verifier(service, lambda *_args, **_kwargs: FakeResponse({"large": "x" * 70_000}))
+
+    with pytest.raises(EvidenceRejected, match="exceeded the configured size limit"):
+        check.verify_and_record(task["id"], actor="health-verifier")
+    assert store.list_evidence(task["id"]) == []
+
 def test_render_health_only_applies_to_deployment_tasks(system):
     _, store, _, service = system
     task = task_for(service, task_type="implementation", key="render-health-not-deployment")
