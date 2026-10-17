@@ -21,7 +21,9 @@ def canonical_json(value: Any) -> str:
 
 
 class DurableStore:
-    """Transactional SQLite store for a single-node MVP; PostgreSQL is the production multi-node target."""
+    """Transactional SQLite store for local/single-node deployments."""
+
+    backend = "sqlite"
 
     def __init__(self, db_path: str | Path):
         self.db_path = str(db_path)
@@ -134,6 +136,14 @@ class DurableStore:
                 conn.execute(
                     "ALTER TABLE audit_events ADD COLUMN hash_version INTEGER NOT NULL DEFAULT 1 CHECK (hash_version IN (1,2))"
                 )
+
+    def lock_task(self, conn: sqlite3.Connection, task_id: str):
+        """Read a task inside a write transaction; SQLite BEGIN IMMEDIATE serializes writers."""
+        return conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+
+    def lock_idempotency_key(self, conn: sqlite3.Connection, idempotency_key: str) -> None:
+        """SQLite write transactions serialize idempotency checks; PostgreSQL overrides this."""
+        return None
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
