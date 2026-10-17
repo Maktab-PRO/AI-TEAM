@@ -14,7 +14,7 @@
 
 ## 4. Evidence Gate
 
-**Invariant:** no direct `verified` status update. Each task type has a versioned set of required evidence kinds. Evidence must be passing, trusted, and from an allowed verification source. Generic API submissions are always untrusted. The GitHub Actions endpoint trusts a record only after checking the run's canonical API identity, repository, task branch, commit SHA, completed-success conclusion, allowlisted workflow path, and successful required test/security job signals. The server token is read-only and never supplied by the caller. The GitHub PR review endpoint separately verifies that the PR is open/unmerged, matches the registered repository/default base and task head branch, and has a non-author APPROVED review for the current head SHA with no latest CHANGES_REQUESTED state. Render health verification remains future work. Placeholder evidence URLs are rejected.
+**Invariant:** no direct `verified` status update. Each task type has a versioned set of required evidence kinds. Evidence must be passing, trusted, and from an allowed verification source. Generic API submissions are always untrusted. The GitHub Actions endpoint trusts a record only after checking the run's canonical API identity, repository, task branch, commit SHA, completed-success conclusion, allowlisted workflow path, and successful required test/security job signals. The server token is read-only and never supplied by the caller. The GitHub PR review endpoint separately verifies that the PR is open/unmerged, matches the registered repository/default base and task head branch, and has a non-author APPROVED review for the current head SHA with no latest CHANGES_REQUESTED state. Render health verification is allowed only for a project ID with an explicit configured HTTPS health URL and expected service/status markers. The verifier makes a GET request with redirects disabled and does not trigger a deploy or restart. Placeholder evidence URLs are rejected.
 
 ## 5. Durable State
 
@@ -31,7 +31,7 @@
 ## Non-goals of milestone 0.1
 
 - No automatic agent spawning or unattended/background orchestration.
-- No Render health verification yet. GitHub Actions and GitHub PR review verification are supported only through the read-only GitHub API token; Actions verification additionally requires exact workflow allowlist entries.
+- No automated production deployment or service restart. Render health verification performs only an allowlisted GET check; no live project URL is preconfigured. GitHub Actions and GitHub PR review verification use a read-only GitHub token; Actions additionally requires exact workflow allowlist entries.
 - No production deployment, PR merge, destructive database operation, or secret management.
 - No live Notion sync or Redis daemon management.
 - No claim that SQLite has been validated for concurrent multi-instance production. Basic project-scoped roles are enforced in the API, but an external human identity provider, rate limiting, and provider-backed task evidence are not implemented; keep the service private.
