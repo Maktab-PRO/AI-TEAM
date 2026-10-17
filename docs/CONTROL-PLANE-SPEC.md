@@ -24,10 +24,14 @@
 
 **Invariant:** every material task/evidence state change writes an audit event in the same transaction. Events are canonicalized and linked with versioned SHA-256 hashes. Version 2 covers the task_id column and event content; legacy version-1 events remain readable but did not bind that column. A passing chain signals integrity since the last trusted checkpoint, not proof that the original actor was honest.
 
+## API authorization
+
+**Invariant:** production bearer tokens map to one fixed actor, one role, and an explicit list of registered project IDs. Only `platform_admin` can use the global `*` scope; that role must be configured with it explicitly. Task reads and mutations enforce project scope even after authentication. Workers cannot call verification; reviewers cannot create or claim tasks. Project-scoped roles cannot inspect the global audit chain or outbox. Identity-only legacy token maps fail closed. Development `X-Actor` behavior is local-only.
+
 ## Non-goals of milestone 0.1
 
 - No automatic agent spawning or unattended/background orchestration.
 - No provider API evidence verification yet.
 - No production deployment, PR merge, destructive database operation, or secret management.
 - No live Notion sync or Redis daemon management.
-- No claim that SQLite has been validated for concurrent multi-instance production. Production bearer tokens map to fixed actor IDs, but project-/role-scoped RBAC, human identity, and rate limiting are not implemented; keep the service private.
+- No claim that SQLite has been validated for concurrent multi-instance production. Basic project-scoped roles are enforced in the API, but an external human identity provider, rate limiting, and provider-backed task evidence are not implemented; keep the service private.
