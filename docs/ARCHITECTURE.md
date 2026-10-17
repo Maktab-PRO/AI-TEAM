@@ -31,7 +31,7 @@ Notion: human-readable decisions, runbooks, architecture pages; not authoritativ
 
 - Project↔repository identity: `config/projects.json`, changed by reviewed commit.
 - Active task state, lease, dependencies, evidence index, audit events, and outbox: durable database.
-- CI truth: the server-side GitHub Actions verifier checks repository identity, task branch, run ID/canonical URL, commit SHA, completion conclusion, an exact allowlisted workflow path, and successful required test/security jobs before recording trusted evidence.
+- CI truth: the server-side GitHub Actions verifier checks repository identity, task branch, run ID/canonical URL, commit SHA, current branch head SHA, completion conclusion, an exact allowlisted workflow path, and successful required test/security jobs before recording trusted evidence.
 - PR review truth: the server-side GitHub Pull Requests verifier checks repository identity, configured default base branch, task head branch, open/unmerged state, latest review states, author exclusion, and an APPROVED review on the exact current head SHA.
 - Render health truth: the verifier uses only a configured project-to-URL allowlist, makes a bounded HTTPS GET to the exact health endpoint without redirects, and requires both configured service and status JSON markers to match. No endpoint is preconfigured and the verifier cannot deploy or restart a service.
 - A URL supplied through the generic public evidence endpoint remains untrusted.
