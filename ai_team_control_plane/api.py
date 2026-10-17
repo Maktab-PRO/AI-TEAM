@@ -15,6 +15,7 @@ from .orchestrator import TaskOrchestrator
 from .registry import ProjectRegistry
 from .database import create_store
 from .integrations.github_evidence import GitHubActionsEvidenceVerifier
+from .integrations.github_review import GitHubPullRequestReviewVerifier
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +66,10 @@ class EvidenceInput(BaseModel):
 
 class GitHubActionsEvidenceInput(BaseModel):
     run_url: str = Field(min_length=20, max_length=2000)
+
+
+class GitHubPullRequestEvidenceInput(BaseModel):
+    pull_url: str = Field(min_length=20, max_length=2000)
 
 
 _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
@@ -461,6 +466,27 @@ def verify_github_actions_evidence(
             approved_workflows=_github_workflow_allowlist(),
         )
         return verifier.verify_and_record(task_id, run_url=body.run_url, actor=actor)
+    except Exception as exc:
+        raise safe_error(exc) from exc
+
+
+@app.post("/tasks/{task_id}/evidence/github-review")
+def verify_github_pull_request_review(
+    request: Request,
+    task_id: str,
+    body: GitHubPullRequestEvidenceInput,
+    actor: str = Depends(require_permission("tasks.evidence")),
+) -> dict:
+    _require_task_scope(request, task_id)
+    token = os.getenv("AI_TEAM_GITHUB_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub PR review verifier is not configured; set AI_TEAM_GITHUB_TOKEN in the secret environment.",
+        )
+    try:
+        verifier = GitHubPullRequestReviewVerifier(orchestrator, registry, token=token)
+        return verifier.verify_and_record(task_id, pull_url=body.pull_url, actor=actor)
     except Exception as exc:
         raise safe_error(exc) from exc
 
