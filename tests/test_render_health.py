@@ -27,8 +27,8 @@ class FakeResponse:
     def __exit__(self, *_args):
         return False
 
-    def read(self):
-        return self.payload
+    def read(self, size=-1):
+        return self.payload if size < 0 else self.payload[:size]
 
 
 def task_for(service, task_type="deployment", key="render-health-task"):
