@@ -14,7 +14,7 @@
 
 ## 4. Evidence Gate
 
-**Invariant:** no direct `verified` status update. Each task type has a versioned set of required evidence kinds. Evidence must be passing, trusted, and from an allowed verification source. Generic API submissions are always untrusted. The GitHub Actions endpoint trusts a record only after checking the run's canonical API identity, repository, task branch, commit SHA, completed-success conclusion, allowlisted workflow path, and successful required test/security job signals. The server token is read-only and never supplied by the caller. GitHub review and Render verifiers remain future work. Placeholder evidence URLs are rejected.
+**Invariant:** no direct `verified` status update. Each task type has a versioned set of required evidence kinds. Evidence must be passing, trusted, and from an allowed verification source. Generic API submissions are always untrusted. The GitHub Actions endpoint trusts a record only after checking the run's canonical API identity, repository, task branch, commit SHA, completed-success conclusion, allowlisted workflow path, and successful required test/security job signals. The server token is read-only and never supplied by the caller. The GitHub PR review endpoint separately verifies that the PR is open/unmerged, matches the registered repository/default base and task head branch, and has a non-author APPROVED review for the current head SHA with no latest CHANGES_REQUESTED state. Render health verification remains future work. Placeholder evidence URLs are rejected.
 
 ## 5. Durable State
 
@@ -31,7 +31,7 @@
 ## Non-goals of milestone 0.1
 
 - No automatic agent spawning or unattended/background orchestration.
-- No automatic GitHub Review approval or Render health verification yet; GitHub Actions run/job verification is supported only for explicit workflow allowlist entries.
+- No Render health verification yet. GitHub Actions and GitHub PR review verification are supported only through the read-only GitHub API token; Actions verification additionally requires exact workflow allowlist entries.
 - No production deployment, PR merge, destructive database operation, or secret management.
 - No live Notion sync or Redis daemon management.
 - No claim that SQLite has been validated for concurrent multi-instance production. Basic project-scoped roles are enforced in the API, but an external human identity provider, rate limiting, and provider-backed task evidence are not implemented; keep the service private.
