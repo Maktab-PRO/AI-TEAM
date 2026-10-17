@@ -6,7 +6,8 @@ from ai_team_control_plane import api
 def setup_api(monkeypatch, system):
     registry, store, guard, orchestrator = system
     monkeypatch.setenv("APP_ENV", "development")
-    monkeypatch.delenv("AI_TEAM_API_TOKEN", raising=False)
+    for name in ("AI_TEAM_API_TOKEN", "AI_TEAM_API_TOKENS", "AI_TEAM_API_ACTOR", "AI_TEAM_API_ROLE", "AI_TEAM_API_PROJECTS"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(api, "registry", registry)
     monkeypatch.setattr(api, "store", store)
     monkeypatch.setattr(api, "guard", guard)
@@ -92,6 +93,8 @@ def test_production_api_requires_bearer_token(monkeypatch, system):
     token = "super-secret-test-token-0123456789-abcdef"
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("AI_TEAM_API_TOKEN", token)
+    monkeypatch.setenv("AI_TEAM_API_ROLE", "platform_admin")
+    monkeypatch.setenv("AI_TEAM_API_PROJECTS", "*")
     no_token = client.get("/projects", headers={"X-Actor": "api-test"})
     assert no_token.status_code == 401
     authenticated = client.get("/projects", headers={"Authorization": f"Bearer {token}"})
@@ -153,6 +156,8 @@ def test_production_api_actor_cannot_be_spoofed_and_is_pinned(monkeypatch, syste
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("AI_TEAM_API_TOKEN", token)
     monkeypatch.setenv("AI_TEAM_API_ACTOR", "ci-service")
+    monkeypatch.setenv("AI_TEAM_API_ROLE", "platform_admin")
+    monkeypatch.setenv("AI_TEAM_API_PROJECTS", "*")
     client = TestClient(api.app)
     response = client.get("/projects", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
@@ -170,10 +175,14 @@ def test_production_token_map_binds_distinct_actor_identities(monkeypatch, syste
     token_b = "token-for-reviewer-b-0123456789-abcdef"
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("AI_TEAM_API_TOKEN", raising=False)
-    monkeypatch.setenv("AI_TEAM_API_TOKENS", __import__("json").dumps({token_a: "worker-a", token_b: "reviewer-b"}))
+    monkeypatch.setenv("AI_TEAM_API_TOKENS", __import__("json").dumps({
+        token_a: {"actor": "worker-a", "role": "worker", "projects": ["axsikent-it"]},
+        token_b: {"actor": "reviewer-b", "role": "reviewer", "projects": ["axsikent-it"]},
+    }))
     client = TestClient(api.app)
     worker_response = client.get("/projects", headers={"Authorization": f"Bearer {token_a}"})
     assert worker_response.status_code == 200
+    assert [project["id"] for project in worker_response.json()["projects"]] == ["axsikent-it"]
     assert api.authenticated_actor(None, f"Bearer {token_a}", None) == "worker-a"
     wrong_identity = client.get(
         "/projects",
@@ -188,6 +197,8 @@ def test_production_claim_uses_authenticated_actor_as_lease_owner(monkeypatch, s
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("AI_TEAM_API_TOKEN", token)
     monkeypatch.setenv("AI_TEAM_API_ACTOR", "worker-a")
+    monkeypatch.setenv("AI_TEAM_API_ROLE", "worker")
+    monkeypatch.setenv("AI_TEAM_API_PROJECTS", "axsikent-it")
     client = TestClient(api.app)
     created = client.post(
         "/tasks",
@@ -209,3 +220,122 @@ def test_production_claim_uses_authenticated_actor_as_lease_owner(monkeypatch, s
         headers={"Authorization": f"Bearer {token}"},
     )
     assert progressed.status_code == 200, progressed.text
+
+
+def test_project_scopes_filter_reads_and_block_cross_project_operations(monkeypatch, system):
+    client = setup_api(monkeypatch, system)
+    axsikent = client.post(
+        "/tasks",
+        json=valid_task_payload(title="Scoped Axsikent task"),
+        headers={"X-Actor": "dev-admin", "Idempotency-Key": "scope-axsikent"},
+    )
+    technikum = client.post(
+        "/tasks",
+        json=valid_task_payload(
+            project_id="technikum-digital-platform",
+            repository="Maktab-PRO/TECHNIKUM-DIGITAL-PLATFORM",
+            title="Scoped Technikum task",
+        ),
+        headers={"X-Actor": "dev-admin", "Idempotency-Key": "scope-technikum"},
+    )
+    assert axsikent.status_code == 201, axsikent.text
+    assert technikum.status_code == 201, technikum.text
+    technikum_id = technikum.json()["id"]
+
+    token = "scoped-worker-token-0123456789-abcdef"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv(
+        "AI_TEAM_API_TOKENS",
+        __import__("json").dumps({
+            token: {"actor": "axsikent-worker", "role": "worker", "projects": ["axsikent-it"]},
+        }),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    project_list = client.get("/projects", headers=headers)
+    assert project_list.status_code == 200
+    assert [project["id"] for project in project_list.json()["projects"]] == ["axsikent-it"]
+
+    task_list = client.get("/tasks", headers=headers)
+    assert task_list.status_code == 200
+    assert all(item["project_id"] == "axsikent-it" for item in task_list.json()["items"])
+
+    hidden_task = client.get(f"/tasks/{technikum_id}", headers=headers)
+    assert hidden_task.status_code == 404
+    hidden_claim = client.post(
+        f"/tasks/{technikum_id}/claim",
+        json={"worker_id": "spoofed", "lease_seconds": 60},
+        headers=headers,
+    )
+    assert hidden_claim.status_code == 404
+
+    forbidden_create = client.post(
+        "/tasks",
+        json=valid_task_payload(
+            project_id="technikum-digital-platform",
+            repository="Maktab-PRO/TECHNIKUM-DIGITAL-PLATFORM",
+            title="Cross-project create attempt",
+        ),
+        headers={**headers, "Idempotency-Key": "cross-scope-create"},
+    )
+    assert forbidden_create.status_code == 403
+
+
+def test_reviewer_can_read_but_cannot_claim_or_create(monkeypatch, system):
+    client = setup_api(monkeypatch, system)
+    created = client.post(
+        "/tasks",
+        json=valid_task_payload(),
+        headers={"X-Actor": "dev-admin", "Idempotency-Key": "reviewer-role-task"},
+    )
+    assert created.status_code == 201
+    task_id = created.json()["id"]
+
+    token = "reviewer-role-token-0123456789-abcdef"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv(
+        "AI_TEAM_API_TOKENS",
+        __import__("json").dumps({
+            token: {"actor": "reviewer-1", "role": "reviewer", "projects": ["axsikent-it"]},
+        }),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    assert client.get("/tasks", headers=headers).status_code == 200
+
+    claim = client.post(
+        f"/tasks/{task_id}/claim",
+        json={"worker_id": "reviewer-1", "lease_seconds": 60},
+        headers=headers,
+    )
+    assert claim.status_code == 403
+
+    create = client.post(
+        "/tasks",
+        json=valid_task_payload(title="Reviewer must not create tasks"),
+        headers={**headers, "Idempotency-Key": "reviewer-create-denied"},
+    )
+    assert create.status_code == 403
+
+
+def test_project_admin_cannot_read_global_audit_or_outbox(monkeypatch, system):
+    client = setup_api(monkeypatch, system)
+    token = "project-admin-token-0123456789-abcdef"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv(
+        "AI_TEAM_API_TOKENS",
+        __import__("json").dumps({
+            token: {"actor": "project-admin", "role": "project_admin", "projects": ["axsikent-it"]},
+        }),
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    assert client.get("/audit/verify", headers=headers).status_code == 403
+    assert client.get("/outbox", headers=headers).status_code == 403
+
+
+def test_production_legacy_identity_only_token_map_fails_closed(monkeypatch, system):
+    client = setup_api(monkeypatch, system)
+    token = "legacy-token-must-not-be-unscoped-012345"
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("AI_TEAM_API_TOKENS", __import__("json").dumps({token: "legacy-actor"}))
+    response = client.get("/projects", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 503
