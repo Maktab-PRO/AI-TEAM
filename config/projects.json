@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "projects": [
+    {
+      "id": "axsikent-it",
+      "name": "Axsikent IT",
+      "repository": "Maktab-PRO/Axsikent-IT",
+      "status": "active",
+      "default_branch": "main",
+      "protected_branches": [
+        "main",
+        "master",
+        "production"
+      ],
+      "write_branch_prefixes": [
+        "ai-team/",
+        "codex/",
+        "feature/",
+        "fix/"
+      ],
+      "allowed_paths": [
+        "**"
+      ],
+      "description": "Education platform. Changes must remain in this exact repository; do not combine with Technikum."
+    },
+    {
+      "id": "technikum-digital-platform",
+      "name": "Technikum Digital Platform",
+      "repository": "Maktab-PRO/TECHNIKUM-DIGITAL-PLATFORM",
+      "status": "active",
+      "default_branch": "main",
+      "protected_branches": [
+        "main",
+        "master",
+        "production"
+      ],
+      "write_branch_prefixes": [
+        "ai-team/",
+        "codex/",
+        "feature/",
+        "fix/"
+      ],
+      "allowed_paths": [
+        "**"
+      ],
+      "description": "Separate institutional digital platform. Never import Axsikent changes here."
+    },
+    {
+      "id": "telegram-personal-ai",
+      "name": "Personal Telegram AI Bot",
+      "repository": "Maktab-PRO/telegram-personal-ai",
+      "status": "active",
+      "default_branch": "main",
+      "protected_branches": [
+        "main",
+        "master",
+        "production"
+      ],
+      "write_branch_prefixes": [
+        "ai-team/",
+        "codex/",
+        "feature/",
+        "fix/"
+      ],
+      "allowed_paths": [
+        "**"
+      ],
+      "description": "Personal bot project. Separate from both education platforms."
+    },
+    {
+      "id": "ai-team-control-plane",
+      "name": "AI TEAM Control Plane",
+      "repository": "Maktab-PRO/AI-TEAM",
+      "status": "active",
+      "default_branch": "main",
+      "protected_branches": [
+        "main",
+        "master",
+        "production"
+      ],
+      "write_branch_prefixes": [
+        "ai-team/"
+      ],
+      "allowed_paths": [
+        "**"
+      ],
+      "description": "Dedicated AI TEAM control-plane repository. Keep project registry, boundary guard, task orchestration, evidence gate, durable state, and audit log isolated here."
+    },
+    {
+      "id": "unclassified-repository-4",
+      "name": "Unclassified repository from linked GitHub account",
+      "repository": "Maktab-PRO/aqlli-mahalla-temirqishloq",
+      "status": "quarantined",
+      "default_branch": "main",
+      "protected_branches": [
+        "main",
+        "master",
+        "production"
+      ],
+      "write_branch_prefixes": [
+        "ai-team/"
+      ],
+      "allowed_paths": [
+        "**"
+      ],
+      "description": "Discovered in account repository listing, but project identity and ownership boundaries have not been confirmed. No tasks or writes permitted."
+    }
+  ]
+}
