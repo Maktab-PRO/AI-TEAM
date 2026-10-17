@@ -21,6 +21,7 @@ class RenderHealthEvidenceVerifier:
     """Verify a configured health endpoint without accepting caller-supplied URLs."""
 
     VERIFIER_ID = "render-health-api"
+    MAX_HEALTH_RESPONSE_BYTES = 65_536
 
     def __init__(
         self,
@@ -84,7 +85,9 @@ class RenderHealthEvidenceVerifier:
                 status = getattr(response, "status", None)
                 if status is None and hasattr(response, "getcode"):
                     status = response.getcode()
-                body = response.read()
+                body = response.read(self.MAX_HEALTH_RESPONSE_BYTES + 1)
+                if len(body) > self.MAX_HEALTH_RESPONSE_BYTES:
+                    raise EvidenceRejected("Health response exceeded the configured size limit; no trusted evidence was recorded.")
         except HTTPError as exc:
             raise EvidenceRejected(
                 f"Configured health endpoint returned HTTP {exc.code}; no trusted health evidence was recorded."
