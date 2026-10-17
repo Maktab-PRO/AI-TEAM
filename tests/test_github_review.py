@@ -18,8 +18,8 @@ class FakeResponse:
     def __exit__(self, *_args):
         return False
 
-    def read(self):
-        return self.payload
+    def read(self, size=-1):
+        return self.payload if size < 0 else self.payload[:size]
 
 
 PULL_URL = "https://github.com/Maktab-PRO/Axsikent-IT/pull/42"
