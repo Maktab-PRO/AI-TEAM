@@ -27,6 +27,7 @@ class GitHubActionsEvidenceVerifier:
         orchestrator,
         token: str,
         *,
+        approved_workflows: dict[str, list[str] | tuple[str, ...]],
         opener: Callable[..., Any] | None = None,
         timeout: float = 10.0,
     ):
@@ -34,6 +35,10 @@ class GitHubActionsEvidenceVerifier:
         self.token = token.strip()
         self.opener = opener or urlopen
         self.timeout = timeout
+        self.approved_workflows = {
+            repository.casefold(): frozenset(paths)
+            for repository, paths in approved_workflows.items()
+        }
 
     def _get_json(self, url: str) -> dict[str, Any]:
         if not self.token:
@@ -146,6 +151,11 @@ class GitHubActionsEvidenceVerifier:
             raise EvidenceRejected(
                 f"Run repository {requested_repository!r} does not match task repository {task['repository']!r}."
             )
+        approved_paths = self.approved_workflows.get(task["repository"].casefold())
+        if not approved_paths:
+            raise EvidenceRejected(
+                f"No approved GitHub Actions workflow paths are configured for {task['repository']!r}; no trusted evidence was recorded."
+            )
 
         api_repo = f"{quote(owner, safe='')}/{quote(repository, safe='')}"
         run = self._get_json(f"{self.API_ROOT}/repos/{api_repo}/actions/runs/{run_id}")
@@ -159,6 +169,11 @@ class GitHubActionsEvidenceVerifier:
         if run.get("head_branch") != task["branch"]:
             raise EvidenceRejected(
                 f"Run branch {run.get('head_branch')!r} does not match the task branch {task['branch']!r}."
+            )
+        workflow_path = run.get("path")
+        if not isinstance(workflow_path, str) or workflow_path not in approved_paths:
+            raise EvidenceRejected(
+                f"Workflow path {workflow_path!r} is not approved for repository {task['repository']!r}; no trusted evidence was recorded."
             )
         head_sha = run.get("head_sha")
         if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40,64}", head_sha):
