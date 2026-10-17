@@ -100,6 +100,7 @@ class TaskOrchestrator:
         task_id = str(uuid.uuid4())
         now = utc_now()
         with self.store.transaction() as conn:
+            self.store.lock_idempotency_key(conn, idempotency_key)
             existing = conn.execute("SELECT * FROM tasks WHERE idempotency_key = ?", (idempotency_key,)).fetchone()
             if existing:
                 if existing["request_hash"] != request_hash:
@@ -131,7 +132,7 @@ class TaskOrchestrator:
         now = now_dt.isoformat(timespec="milliseconds")
         lease_until = (now_dt + timedelta(seconds=lease_seconds)).isoformat(timespec="milliseconds")
         with self.store.transaction() as conn:
-            row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            row = self.store.lock_task(conn, task_id)
             if row is None:
                 raise KeyError(f"Unknown task ID: {task_id}")
             self._authorize_task_row(row)
@@ -183,7 +184,7 @@ class TaskOrchestrator:
             raise StateConflict("VERIFIED is protected by Evidence Gate; call verify_task instead.")
         now = utc_now()
         with self.store.transaction() as conn:
-            row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            row = self.store.lock_task(conn, task_id)
             if row is None:
                 raise KeyError(f"Unknown task ID: {task_id}")
             self._authorize_task_row(row)
@@ -244,7 +245,7 @@ class TaskOrchestrator:
         evidence_id = str(uuid.uuid4())
         now = utc_now()
         with self.store.transaction() as conn:
-            row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            row = self.store.lock_task(conn, task_id)
             if row is None:
                 raise KeyError(f"Unknown task ID: {task_id}")
             self._authorize_task_row(row)
@@ -279,7 +280,7 @@ class TaskOrchestrator:
         actor = _clean_actor(actor)
         now = utc_now()
         with self.store.transaction() as conn:
-            row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            row = self.store.lock_task(conn, task_id)
             if row is None:
                 raise KeyError(f"Unknown task ID: {task_id}")
             self._authorize_task_row(row)
