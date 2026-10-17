@@ -243,6 +243,55 @@ def _require_task_scope(request: Request, task_id: str) -> dict[str, Any]:
     return task
 
 
+def _github_workflow_allowlist() -> dict[str, list[str]]:
+    raw = os.getenv("AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST", "").strip()
+    if not raw:
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub Actions verifier needs an explicit AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST.",
+        )
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST must be a JSON object from owner/repository to approved workflow paths.",
+        ) from exc
+    if not isinstance(value, dict) or not value:
+        raise HTTPException(status_code=503, detail="AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST must be a non-empty JSON object.")
+
+    result: dict[str, list[str]] = {}
+    for repository, paths in value.items():
+        parts = repository.split("/") if isinstance(repository, str) else []
+        if (
+            len(parts) != 2
+            or any(not part or part != part.strip() for part in parts)
+            or not isinstance(paths, list)
+            or not paths
+            or repository.casefold() in result
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="Each workflow allowlist entry must use one exact owner/repository key and a non-empty list of workflow paths.",
+            )
+        clean_paths: list[str] = []
+        for path in paths:
+            if (
+                not isinstance(path, str)
+                or path != path.strip()
+                or not path.startswith(".github/workflows/")
+                or any(part in {"", ".", ".."} for part in path.split("/"))
+                or path in clean_paths
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail="Approved workflow paths must be unique safe paths under .github/workflows/.",
+                )
+            clean_paths.append(path)
+        result[repository] = clean_paths
+    return result
+
+
 def safe_error(exc: Exception) -> HTTPException:
     if isinstance(exc, HTTPException):
         return exc
@@ -403,7 +452,11 @@ def verify_github_actions_evidence(
             detail="GitHub Actions evidence verifier is not configured; set AI_TEAM_GITHUB_TOKEN in the secret environment.",
         )
     try:
-        verifier = GitHubActionsEvidenceVerifier(orchestrator, token=token)
+        verifier = GitHubActionsEvidenceVerifier(
+            orchestrator,
+            token=token,
+            approved_workflows=_github_workflow_allowlist(),
+        )
         return verifier.verify_and_record(task_id, run_url=body.run_url, actor=actor)
     except Exception as exc:
         raise safe_error(exc) from exc
