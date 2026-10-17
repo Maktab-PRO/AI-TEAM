@@ -44,6 +44,7 @@ def run_payload(**changes):
     value = {
         "id": 123456,
         "name": "AI TEAM Control Plane CI",
+        "path": ".github/workflows/ci.yml",
         "repository": {"full_name": "Maktab-PRO/Axsikent-IT"},
         "html_url": RUN_URL,
         "head_branch": "ai-team/github-evidence",
@@ -88,7 +89,12 @@ def test_verifier_records_ci_and_test_evidence_only_after_github_api_success(sys
     _, store, _, service = system
     task = task_for(service)
     opener, calls = make_opener()
-    verifier = GitHubActionsEvidenceVerifier(service, "read-only-test-token", opener=opener)
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "read-only-test-token",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=opener,
+    )
 
     result = verifier.verify_and_record(task["id"], run_url=RUN_URL, actor="ci-verifier")
 
@@ -108,7 +114,12 @@ def test_verifier_rejects_repository_mismatch_before_api_call(system):
     _, store, _, service = system
     task = task_for(service)
     opener, calls = make_opener()
-    verifier = GitHubActionsEvidenceVerifier(service, "read-only-test-token", opener=opener)
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "read-only-test-token",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=opener,
+    )
 
     with pytest.raises(EvidenceRejected, match="does not match task repository"):
         verifier.verify_and_record(
@@ -125,7 +136,12 @@ def test_verifier_rejects_noncanonical_or_untrusted_run_url(system):
     _, _, _, service = system
     task = task_for(service)
     opener, calls = make_opener()
-    verifier = GitHubActionsEvidenceVerifier(service, "read-only-test-token", opener=opener)
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "read-only-test-token",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=opener,
+    )
 
     with pytest.raises(EvidenceRejected, match="exact HTTPS github.com"):
         verifier.verify_and_record(
@@ -142,7 +158,12 @@ def test_verifier_rejects_wrong_branch_and_records_nothing(system):
     task = task_for(service)
     wrong_branch = run_payload(head_branch="main")
     opener, _ = make_opener(run=wrong_branch)
-    verifier = GitHubActionsEvidenceVerifier(service, "read-only-test-token", opener=opener)
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "read-only-test-token",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=opener,
+    )
 
     with pytest.raises(EvidenceRejected, match="does not match the task branch"):
         verifier.verify_and_record(task["id"], run_url=RUN_URL, actor="ci-verifier")
@@ -154,7 +175,12 @@ def test_verifier_rejects_unsuccessful_run_and_records_nothing(system):
     _, store, _, service = system
     task = task_for(service)
     opener, _ = make_opener(run=run_payload(conclusion="failure"))
-    verifier = GitHubActionsEvidenceVerifier(service, "read-only-test-token", opener=opener)
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "read-only-test-token",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=opener,
+    )
 
     with pytest.raises(EvidenceRejected, match="not completed successfully"):
         verifier.verify_and_record(task["id"], run_url=RUN_URL, actor="ci-verifier")
@@ -169,7 +195,12 @@ def test_security_task_requires_successful_security_job_and_test_job(system):
         {"name": "test (3.12)", "status": "completed", "conclusion": "success", "steps": []},
     ])
     opener, _ = make_opener(jobs=only_tests)
-    verifier = GitHubActionsEvidenceVerifier(service, "read-only-test-token", opener=opener)
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "read-only-test-token",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=opener,
+    )
 
     with pytest.raises(EvidenceRejected, match="security_scan_passed"):
         verifier.verify_and_record(task["id"], run_url=RUN_URL, actor="ci-verifier")
@@ -181,7 +212,12 @@ def test_bugfix_requires_explicit_regression_signal(system):
     _, store, _, service = system
     task = task_for(service, task_type="bugfix", key="github-bugfix-evidence")
     opener, _ = make_opener()
-    verifier = GitHubActionsEvidenceVerifier(service, "read-only-test-token", opener=opener)
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "read-only-test-token",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=opener,
+    )
 
     with pytest.raises(EvidenceRejected, match="regression_test_passed"):
         verifier.verify_and_record(task["id"], run_url=RUN_URL, actor="ci-verifier")
@@ -192,7 +228,31 @@ def test_bugfix_requires_explicit_regression_signal(system):
 def test_missing_github_token_fails_closed(system):
     _, _, _, service = system
     task = task_for(service)
-    verifier = GitHubActionsEvidenceVerifier(service, "", opener=lambda *_args, **_kwargs: pytest.fail("network must not be called"))
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=lambda *_args, **_kwargs: pytest.fail("network must not be called"),
+    )
 
     with pytest.raises(EvidenceRejected, match="AI_TEAM_GITHUB_TOKEN is missing"):
         verifier.verify_and_record(task["id"], run_url=RUN_URL, actor="ci-verifier")
+
+
+
+def test_verifier_rejects_workflow_path_not_in_allowlist(system):
+    _, store, _, service = system
+    task = task_for(service, key="github-unapproved-workflow-path")
+    unapproved = run_payload(path=".github/workflows/untrusted.yml")
+    opener, _ = make_opener(run=unapproved)
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "read-only-test-token",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=opener,
+    )
+
+    with pytest.raises(EvidenceRejected, match="not approved"):
+        verifier.verify_and_record(task["id"], run_url=RUN_URL, actor="ci-verifier")
+
+    assert store.list_evidence(task["id"]) == []
