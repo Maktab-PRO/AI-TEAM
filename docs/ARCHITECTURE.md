@@ -18,7 +18,8 @@ Task Orchestrator <---------- Boundary Guard
       | transactional outbox append       |
       +-----------------------------------+
       |
-      +---- Evidence Gate <---- trusted verifier adapters (future: GitHub Actions, GitHub Review, Render health, security scanner)
+      +---- Evidence Gate <---- GitHub Actions REST verifier (implemented; exact workflow allowlist required)
+      |                  <---- future: GitHub Review, Render health adapters
       |
       +---- optional outbox publisher ----> Redis Stream (at-least-once)
 
@@ -29,7 +30,7 @@ Notion: human-readable decisions, runbooks, architecture pages; not authoritativ
 
 - Project↔repository identity: `config/projects.json`, changed by reviewed commit.
 - Active task state, lease, dependencies, evidence index, audit events, and outbox: durable database.
-- CI/deployment/review truth: provider API responses checked by trusted adapters. The MVP does not yet implement those network verifiers, so evidence cannot be promoted to trusted by the public API.
+- CI truth: the server-side GitHub Actions verifier checks repository identity, task branch, run ID/canonical URL, commit SHA, completion conclusion, an exact allowlisted workflow path, and successful required test/security jobs before recording trusted evidence. A URL supplied through the generic public evidence endpoint remains untrusted. GitHub review approval and Render health still need their own provider API verifiers.
 - Human reference docs and decision records: Notion can be used after a deliberate integration; not a substitute for audit state.
 - Redis: asynchronous message transport/cache only. Do not use it as the sole record of a task or project.
 
@@ -49,7 +50,7 @@ A worker lease and the task state update happen under a write transaction. The d
 - `security`: security scan, tests, security review.
 - `documentation`: documentation review.
 
-Trusted evidence requires an internal verifier adapter to supply both an approved source and `verified_by`. Public API routes intentionally omit these privileged fields. Tests use a fixture verifier only to validate gate behavior; it is not production evidence.
+Trusted evidence requires an internal verifier adapter to supply both an approved source and `verified_by`. The generic public evidence route never accepts trust claims. The `POST /tasks/{id}/evidence/github-actions` route delegates to the GitHub Actions verifier, which requires a server-side read-only token and a per-repository workflow path allowlist; it cannot trust a URL by itself. GitHub Review and Render verifiers remain future adapters. Unit-test fixture evidence is not production evidence.
 
 ## Durable storage and scaling
 
