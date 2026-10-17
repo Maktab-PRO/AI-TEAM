@@ -21,6 +21,7 @@ class GitHubActionsEvidenceVerifier:
 
     API_ROOT = "https://api.github.com"
     VERIFIER_ID = "github-actions-api"
+    MAX_API_RESPONSE_BYTES = 2_000_000
 
     def __init__(
         self,
@@ -54,7 +55,9 @@ class GitHubActionsEvidenceVerifier:
         )
         try:
             with self.opener(request, timeout=self.timeout) as response:
-                body = response.read()
+                body = response.read(self.MAX_API_RESPONSE_BYTES + 1)
+                if len(body) > self.MAX_API_RESPONSE_BYTES:
+                    raise EvidenceRejected("GitHub Actions API response exceeded the configured size limit; no trusted evidence was recorded.")
         except HTTPError as exc:
             raise EvidenceRejected(
                 f"GitHub Actions API rejected the verification request (HTTP {exc.code}); check read-only token permissions and repository access."
