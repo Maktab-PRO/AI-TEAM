@@ -181,6 +181,16 @@ class GitHubActionsEvidenceVerifier:
         if run.get("status") != "completed" or run.get("conclusion") != "success":
             raise EvidenceRejected("GitHub Actions run is not completed successfully; no trusted evidence was recorded.")
 
+        # A historical successful run is not sufficient if the branch has moved since it ran.
+        branch = self._get_json(
+            f"{self.API_ROOT}/repos/{api_repo}/branches/{quote(task['branch'], safe='')}"
+        )
+        branch_commit = branch.get("commit") if isinstance(branch.get("commit"), dict) else {}
+        if branch.get("name") != task["branch"] or branch_commit.get("sha") != head_sha:
+            raise EvidenceRejected(
+                "The task branch no longer points to this run's head SHA; rerun CI for the current branch commit before trusting evidence."
+            )
+
         jobs = self._get_all_jobs(owner, repository, run_id)
         successful_jobs = self._successful_jobs(jobs)
         job_names = [str(job.get("name", "")) for job in successful_jobs]
