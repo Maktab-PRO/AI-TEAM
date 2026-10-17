@@ -352,13 +352,18 @@ def test_github_actions_endpoint_uses_configured_verifier_and_records_only_serve
     assert created.status_code == 201, created.text
     task_id = created.json()["id"]
     monkeypatch.setenv("AI_TEAM_GITHUB_TOKEN", "fake-secret-token")
+    monkeypatch.setenv(
+        "AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST",
+        __import__("json").dumps({"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]}),
+    )
 
     called = {}
 
     class FakeVerifier:
-        def __init__(self, service, token):
+        def __init__(self, service, token, *, approved_workflows):
             called["service"] = service
             called["token"] = token
+            called["approved_workflows"] = approved_workflows
 
         def verify_and_record(self, task_id, *, run_url, actor):
             called.update({"task_id": task_id, "run_url": run_url, "actor": actor})
@@ -374,6 +379,7 @@ def test_github_actions_endpoint_uses_configured_verifier_and_records_only_serve
     assert response.status_code == 200, response.text
     assert response.json()["recorded_kinds"] == ["tests_passed", "ci_passed"]
     assert called["token"] == "fake-secret-token"
+    assert called["approved_workflows"] == {"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]}
     assert called["task_id"] == task_id
     assert called["actor"] == "api-test"
 
