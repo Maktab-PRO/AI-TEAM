@@ -14,6 +14,7 @@ from .models import BoundaryViolation, ControlPlaneError, EvidenceRejected, Idem
 from .orchestrator import TaskOrchestrator
 from .registry import ProjectRegistry
 from .database import create_store
+from .integrations.github_evidence import GitHubActionsEvidenceVerifier
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +61,10 @@ class EvidenceInput(BaseModel):
     source: str = Field(min_length=1, max_length=100)
     notes: str = Field(default="", max_length=2000)
     artifact_sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
+
+
+class GitHubActionsEvidenceInput(BaseModel):
+    run_url: str = Field(min_length=20, max_length=2000)
 
 
 _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
@@ -379,6 +384,27 @@ def record_evidence(
     try:
         # API callers can record attestations, but cannot mark them trusted.
         return orchestrator.record_evidence(task_id, **body.model_dump(), actor=actor, trusted=False, verified_by=None)
+    except Exception as exc:
+        raise safe_error(exc) from exc
+
+
+@app.post("/tasks/{task_id}/evidence/github-actions")
+def verify_github_actions_evidence(
+    request: Request,
+    task_id: str,
+    body: GitHubActionsEvidenceInput,
+    actor: str = Depends(require_permission("tasks.evidence")),
+) -> dict:
+    _require_task_scope(request, task_id)
+    token = os.getenv("AI_TEAM_GITHUB_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub Actions evidence verifier is not configured; set AI_TEAM_GITHUB_TOKEN in the secret environment.",
+        )
+    try:
+        verifier = GitHubActionsEvidenceVerifier(orchestrator, token=token)
+        return verifier.verify_and_record(task_id, run_url=body.run_url, actor=actor)
     except Exception as exc:
         raise safe_error(exc) from exc
 
