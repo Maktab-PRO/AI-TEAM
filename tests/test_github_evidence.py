@@ -265,6 +265,27 @@ def test_verifier_rejects_workflow_path_not_in_allowlist(system):
 
 
 
+
+
+def test_verifier_rejects_oversized_github_api_response(system):
+    _, store, _, service = system
+    task = task_for(service, key="github-oversized-response")
+
+    def opener(request, timeout=10):
+        if request.full_url.endswith("/actions/runs/123456"):
+            return FakeResponse({"large": "x" * 2_100_000})
+        raise AssertionError("No API call beyond the oversized run response should occur")
+
+    verifier = GitHubActionsEvidenceVerifier(
+        service,
+        "read-only-test-token",
+        approved_workflows={"Maktab-PRO/Axsikent-IT": [".github/workflows/ci.yml"]},
+        opener=opener,
+    )
+    with pytest.raises(EvidenceRejected, match="exceeded the configured size limit"):
+        verifier.verify_and_record(task["id"], run_url=RUN_URL, actor="ci-verifier")
+    assert store.list_evidence(task["id"]) == []
+
 def test_verifier_rejects_successful_run_when_task_branch_has_moved(system):
     _, store, _, service = system
     task = task_for(service, key="github-stale-current-branch")
