@@ -128,7 +128,7 @@ def _set_request_principal(request: Request | None, principal: dict[str, Any]) -
 
 
 def authenticated_actor(
-    request: Request | None,
+    request: Request,
     authorization: str | None = Header(default=None),
     x_actor: str | None = Header(default=None, alias="X-Actor"),
 ) -> str:
