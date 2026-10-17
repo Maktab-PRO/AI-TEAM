@@ -20,7 +20,7 @@ The control plane is designed to make project boundaries and completion rules en
 - `main`, `master`, and `production` are protected from direct writes. For Axsikent, Technikum, and the Telegram bot, allowed write branch prefixes are `ai-team/`, `codex/`, `feature/`, and `fix/`; the AI TEAM repository is restricted to `ai-team/` branches.
 - `.env`/secret/key paths, `.git`, and `.github/workflows` are blocked by the initial policy. CI policy changes need a separate reviewed bootstrap step.
 - No production deploy, PR merge, database restore, secret rotation, repository deletion, or billing action can be triggered by this MVP.
-- GitHub Actions evidence can be trusted only after the server verifies the actual Actions REST API response: exact repository, task branch, completed-success conclusion, an explicitly allowlisted workflow path, and successful required test/security jobs. A run URL alone never creates trusted evidence. GitHub review and Render health adapters remain future work.
+- GitHub Actions evidence can be trusted only after the server verifies the actual Actions REST API response: exact repository, task branch, completed-success conclusion, an explicitly allowlisted workflow path, and successful required test/security jobs. A run URL alone never creates trusted evidence. The GitHub PR review adapter also validates PR repository/base/head, open state, latest review states, author exclusion, and approval of the exact current head SHA. Render health verification remains future work.
 - Redis is an **optional event-delivery layer**. SQLite remains authoritative in the local MVP; Redis is not the source of truth. `RedisOutboxPublisher` uses at-least-once delivery and includes `outbox_id` for consumer deduplication.
 - Notion is intended for human-readable design decisions, runbooks, and project documentation, not as a second conflicting task ledger. A live Notion API sync is not enabled in this milestone.
 
@@ -56,7 +56,7 @@ The API binds to `127.0.0.1:8000` by default. Local development uses SQLite unle
 - `AI_TEAM_API_PROJECTS`: comma-separated exact project IDs; only `platform_admin` may set this to `*`, and that means global access.
 - `AI_TEAM_API_TOKENS`: optional JSON object mapping 32+ character bearer tokens to records such as `{"actor":"worker-a","role":"worker","projects":["axsikent-it"]}`. Identity-only/legacy mappings fail closed. Store real values only in a secret manager/environment.
 - `APP_ENV`: `development` by default; production requires token-to-role/project binding.
-- `AI_TEAM_GITHUB_TOKEN`: read-only GitHub API token used by the server-side Actions verifier. Keep it only in the host secret manager.
+- `AI_TEAM_GITHUB_TOKEN`: fine-grained, read-only GitHub API token used by Actions and PR-review verifiers. Grant Metadata: read, Actions: read, and Pull requests: read; no write permissions are required. Keep it only in the host secret manager.
 - `AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST`: JSON mapping of exact `owner/repository` names to approved `.github/workflows/...` paths. The verifier fails closed if the repository has no approved path or a run comes from another workflow.
 - `REDIS_URL`: reserved for the deployment/worker integration step. Do not add credentials to Git.
 
@@ -72,6 +72,7 @@ The API binds to `127.0.0.1:8000` by default. Local development uses SQLite unle
 | `POST /tasks/{id}/transition` | Apply a legal status transition |
 | `POST /tasks/{id}/evidence` | Record an untrusted/manual evidence reference |
 | `POST /tasks/{id}/evidence/github-actions` | Validate an Actions run via GitHub API and record only policy-approved trusted CI/test evidence |
+| `POST /tasks/{id}/evidence/github-review` | Validate the open PR, branch, current head SHA, and latest reviewer decisions through GitHub API |
 | `POST /tasks/{id}/request-verification` | Move work to evidence review |
 | `POST /tasks/{id}/verify` | Verify using the Evidence Gate only |
 | `GET /audit/verify` | Recompute SHA-256 audit chain |
