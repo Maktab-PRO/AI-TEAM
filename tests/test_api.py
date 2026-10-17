@@ -7,7 +7,7 @@ from ai_team_control_plane import api
 def setup_api(monkeypatch, system):
     registry, store, guard, orchestrator = system
     monkeypatch.setenv("APP_ENV", "development")
-    for name in ("AI_TEAM_API_TOKEN", "AI_TEAM_API_TOKENS", "AI_TEAM_API_ACTOR", "AI_TEAM_API_ROLE", "AI_TEAM_API_PROJECTS", "AI_TEAM_GITHUB_TOKEN"):
+    for name in ("AI_TEAM_API_TOKEN", "AI_TEAM_API_TOKENS", "AI_TEAM_API_ACTOR", "AI_TEAM_API_ROLE", "AI_TEAM_API_PROJECTS", "AI_TEAM_GITHUB_TOKEN", "AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(api, "registry", registry)
     monkeypatch.setattr(api, "store", store)
@@ -433,3 +433,58 @@ def test_github_actions_endpoint_enforces_project_scope_before_verifier(monkeypa
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 404
+
+
+
+def test_github_review_endpoint_uses_server_side_verifier(monkeypatch, system):
+    client = setup_api(monkeypatch, system)
+    created = client.post(
+        "/tasks",
+        json=valid_task_payload(),
+        headers={"X-Actor": "api-test", "Idempotency-Key": "github-review-endpoint"},
+    )
+    assert created.status_code == 201, created.text
+    task_id = created.json()["id"]
+    monkeypatch.setenv("AI_TEAM_GITHUB_TOKEN", "fake-pr-read-token")
+
+    called = {}
+
+    class FakeReviewVerifier:
+        def __init__(self, service, project_registry, token):
+            called["service"] = service
+            called["registry"] = project_registry
+            called["token"] = token
+
+        def verify_and_record(self, task_id, *, pull_url, actor):
+            called.update({"task_id": task_id, "pull_url": pull_url, "actor": actor})
+            return {"task_id": task_id, "recorded_kind": "review_approved"}
+
+    monkeypatch.setattr(api, "GitHubPullRequestReviewVerifier", FakeReviewVerifier)
+    response = client.post(
+        f"/tasks/{task_id}/evidence/github-review",
+        json={"pull_url": "https://github.com/Maktab-PRO/Axsikent-IT/pull/42"},
+        headers={"X-Actor": "api-test"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["recorded_kind"] == "review_approved"
+    assert called["token"] == "fake-pr-read-token"
+    assert called["task_id"] == task_id
+    assert called["actor"] == "api-test"
+
+
+def test_github_review_endpoint_fails_closed_without_token(monkeypatch, system):
+    client = setup_api(monkeypatch, system)
+    created = client.post(
+        "/tasks",
+        json=valid_task_payload(),
+        headers={"X-Actor": "api-test", "Idempotency-Key": "github-review-no-token"},
+    )
+    task_id = created.json()["id"]
+    response = client.post(
+        f"/tasks/{task_id}/evidence/github-review",
+        json={"pull_url": "https://github.com/Maktab-PRO/Axsikent-IT/pull/42"},
+        headers={"X-Actor": "api-test"},
+    )
+    assert response.status_code == 503
+    assert "AI_TEAM_GITHUB_TOKEN" in response.json()["detail"]
