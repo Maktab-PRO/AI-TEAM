@@ -11,7 +11,8 @@ Authenticated API -----> Project Registry (read-only config)
       v                            v
 Task Orchestrator <---------- Boundary Guard
       |
-      +---- single SQLite transaction ----+
+      +---- one database transaction --------+
+      | SQLite locally / PostgreSQL remotely  |
       | task state / dependency / lease   |
       | audit hash-chain append           |
       | transactional outbox append       |
@@ -54,7 +55,7 @@ Trusted evidence requires an internal verifier adapter to supply both an approve
 
 Audit hash version 2 binds the task_id database column as well as event metadata/content. Earlier version-1 records remain verifiable for compatibility, but their task ID column was not part of the original hash. The current chain has no external signed checkpoint, so a full database rewrite by a privileged attacker is outside the protection boundary.
 
-SQLite is suitable for the first local/single-instance milestone. For multiple concurrent service instances, migrate the same transaction boundaries and constraints to PostgreSQL. Use a dedicated AI TEAM database, separate from Axsikent and Technikum databases. Redis Streams uses at-least-once delivery; outbox consumers must deduplicate by `outbox_id`. No background worker is started implicitly by importing the API module.
+SQLite is suitable for local/single-instance development. When `DATABASE_URL` is set, `PostgresStore` uses PostgreSQL transactions, row-level locks for task mutations, per-idempotency-key advisory locks, a schema migration advisory lock, and a global transaction advisory lock to serialize audit-chain appends across workers. Use a dedicated AI TEAM database, separate from Axsikent and Technikum databases. CI uses a separate ephemeral PostgreSQL database to exercise concurrent claims, idempotency, the hash chain, and backup/restore. The presence of a PostgreSQL backend does not by itself establish a production-ready deployment; backup retention, credentials, TLS, migrations, monitoring, and restore drills still need to be configured for the actual host. Redis Streams uses at-least-once delivery; outbox consumers must deduplicate by `outbox_id`. No background worker is started implicitly by importing the API module.
 
 ## Failure policy
 
