@@ -113,7 +113,7 @@ def _validated_principal(value: Any) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="Token projects must be a non-empty list of unique project IDs.")
     if role == "platform_admin":
         if projects != ["*"]:
-            raise HTTPException(status_code=503, detail="platform_admin must have the explicit projects scope [\\"*\\"] or use a narrower role.")
+            raise HTTPException(status_code=503, detail="platform_admin must use the explicit global projects scope '*' or use a narrower role.")
     elif "*" in projects:
         raise HTTPException(status_code=503, detail="Only platform_admin may use the global projects scope.")
     for project_id in projects:
