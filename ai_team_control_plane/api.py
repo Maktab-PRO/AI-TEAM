@@ -13,14 +13,13 @@ from .boundary import BoundaryGuard
 from .models import BoundaryViolation, ControlPlaneError, EvidenceRejected, IdempotencyConflict, StateConflict
 from .orchestrator import TaskOrchestrator
 from .registry import ProjectRegistry
-from .store import DurableStore
+from .database import create_store
 
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = Path(os.getenv("AI_TEAM_REGISTRY_PATH", ROOT / "config" / "projects.json"))
-DB_PATH = Path(os.getenv("AI_TEAM_DB_PATH", ROOT / "data" / "ai-team.sqlite3"))
 registry = ProjectRegistry(REGISTRY_PATH)
-store = DurableStore(DB_PATH)
+store = create_store()
 guard = BoundaryGuard(registry)
 orchestrator = TaskOrchestrator(store, guard)
 app = FastAPI(
@@ -145,6 +144,7 @@ def health() -> dict[str, Any]:
         "status": "ok" if chain["valid"] else "degraded",
         "service": "ai-team-control-plane",
         "registry_schema": registry.SCHEMA_VERSION,
+        "database_backend": getattr(store, "backend", "unknown"),
         "audit_chain_valid": chain["valid"],
         "audit_events_checked": chain["checked_events"],
     }
