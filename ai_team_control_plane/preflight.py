@@ -128,6 +128,54 @@ def _valid_api_credentials(env: dict[str, str], active_project_ids: set[str]) ->
     return bool(credentials)
 
 
+def _valid_api_project_scopes(env: dict[str, str], active_project_ids: set[str]) -> bool:
+    policies: list[object] = []
+    token_map_raw = env.get("AI_TEAM_API_TOKENS", "").strip()
+    if token_map_raw:
+        try:
+            token_map = json.loads(token_map_raw)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(token_map, dict) or not token_map:
+            return False
+        policies.extend(token_map.values())
+
+    if env.get("AI_TEAM_API_TOKEN", "").strip():
+        project_ids = [
+            part.strip()
+            for part in env.get("AI_TEAM_API_PROJECTS", "").split(",")
+            if part.strip()
+        ]
+        policies.append({
+            "role": env.get("AI_TEAM_API_ROLE", "").strip(),
+            "projects": project_ids,
+        })
+
+    if not policies:
+        return False
+
+    for policy in policies:
+        if not isinstance(policy, dict):
+            return False
+        role = policy.get("role")
+        projects = policy.get("projects")
+        if not isinstance(projects, list) or not projects:
+            return False
+        if any(not isinstance(project, str) or not project or project != project.strip() for project in projects):
+            return False
+        if len(projects) != len(set(projects)):
+            return False
+        if role == "platform_admin":
+            if projects != ["*"]:
+                return False
+        elif role in _ALLOWED_ROLES:
+            if "*" in projects or any(project not in active_project_ids for project in projects):
+                return False
+        else:
+            return False
+    return True
+
+
 def _valid_database_url(value: str) -> bool:
     if not value or value != value.strip():
         return False
@@ -300,6 +348,15 @@ def build_preflight_report(environment: dict[str, str] | None = None) -> dict:
         "At least one strong token has a valid fixed actor, role, and active project scope."
         if api_valid
         else "Configure AI_TEAM_API_TOKEN or AI_TEAM_API_TOKENS with a 32+ character token and valid explicit actor/role/project scope.",
+    ))
+
+    project_scopes_valid = _valid_api_project_scopes(env, active_project_ids)
+    checks.append(_check(
+        "api_project_scopes",
+        project_scopes_valid,
+        "Every token is restricted to registered active project IDs or an explicitly global platform_admin scope."
+        if project_scopes_valid
+        else "Every token must have a valid explicit scope: registered project IDs for non-admin roles, or '*' only for platform_admin.",
     ))
 
     github_token = env.get("AI_TEAM_GITHUB_TOKEN", "").strip()
