@@ -349,7 +349,7 @@ def test_verifier_rejects_pull_request_state_change_during_review_check(system):
             })
         raise AssertionError(f"Unexpected GitHub API URL: {url}")
 
-    with pytest.raises(EvidenceRejected, match="pull request changed during review verification"):
+    with pytest.raises(EvidenceRejected, match="(?i)pull request changed during review verification"):
         verifier(service, opener).verify_and_record(
             task["id"],
             pull_url=PULL_URL,
