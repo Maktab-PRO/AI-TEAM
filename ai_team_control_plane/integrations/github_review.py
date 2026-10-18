@@ -144,8 +144,10 @@ class GitHubPullRequestReviewVerifier:
             raise EvidenceRejected(
                 f"Pull request base branch {returned_base.get('ref')!r} does not match registered default branch {project.default_branch!r}."
             )
-        if pr.get("state") != "open" or pr.get("merged") is True:
+        if pr.get("state") != "open" or pr.get("merged") is not False:
             raise EvidenceRejected("Pull request must still be open and unmerged when review evidence is verified.")
+        if pr.get("draft") is not False:
+            raise EvidenceRejected("Draft pull request cannot be accepted as trusted review evidence.")
 
         head_sha = returned_head.get("sha")
         if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40,64}", head_sha):
