@@ -21,7 +21,7 @@ The control plane is designed to make project boundaries and completion rules en
 - `.env`/secret/key paths, `.git`, and `.github/workflows` are blocked by the initial policy. CI policy changes need a separate reviewed bootstrap step.
 - No production deploy, PR merge, database restore, secret rotation, repository deletion, or billing action can be triggered by this MVP.
 - GitHub Actions evidence can be trusted only after the server verifies the actual Actions REST API response: exact repository, task branch, current branch head SHA, completed-success conclusion, an explicitly allowlisted workflow path, and successful required test/security jobs. A run URL alone never creates trusted evidence. The GitHub PR review adapter also validates PR repository/base/head, open non-draft state, latest normalized reviewer states, author exclusion, and approval of the exact current head SHA. It re-reads the PR and branch immediately before writing trusted evidence and rejects state/head changes. Render health evidence is available only for an explicitly configured project health target; it performs a bounded HTTPS GET to the health endpoint, rejects redirects, and requires the configured service/status markers. It never deploys or restarts a service.
-- Redis is an **optional event-delivery layer**. SQLite remains authoritative in the local MVP; Redis is not the source of truth. `RedisOutboxPublisher` uses at-least-once delivery and includes `outbox_id` for consumer deduplication.
+- Redis is an **optional event-delivery layer**. The relational database remains authoritative; Redis is not the source of truth. `RedisOutboxPublisher` uses at-least-once delivery and includes `outbox_id` for consumer deduplication. CI runs the publisher against an isolated Redis 7 service and tests the duplicate window between `XADD` and database acknowledgement.
 - Notion is intended for human-readable design decisions, runbooks, and project documentation, not as a second conflicting task ledger. A live Notion API sync is not enabled in this milestone.
 
 ## Local setup
@@ -59,7 +59,7 @@ The API binds to `127.0.0.1:8000` by default. Local development uses SQLite unle
 - `AI_TEAM_GITHUB_TOKEN`: fine-grained, read-only GitHub API token used by Actions and PR-review verifiers. Grant Contents: read (to compare the current branch SHA), Metadata: read, Actions: read, and Pull requests: read; no write permissions are required. Keep it only in the host secret manager.
 - `AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST`: JSON mapping of exact `owner/repository` names to approved `.github/workflows/...` paths. The verifier fails closed if the repository has no approved path or a run comes from another workflow.
 - `AI_TEAM_RENDER_HEALTH_ALLOWLIST`: JSON mapping of registered project IDs to exact health targets, for example `{"axsikent-it":{"url":"https://your-service.onrender.com/health","expected_service":"your-service","expected_status":"ok"}}`. Configure only public HTTPS health endpoints whose returned service and status fields you control. No real endpoint is preconfigured.
-- `REDIS_URL`: reserved for the deployment/worker integration step. Do not add credentials to Git.
+- `REDIS_URL`: optional Redis connection URL used only when explicitly running `ai-team publish-outbox`; do not expose it to API callers or commit credentials. CI uses an ephemeral Redis service, not a production Redis instance.
 
 ## Endpoint map
 
