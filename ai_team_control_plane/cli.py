@@ -9,6 +9,7 @@ from .boundary import BoundaryGuard
 from .orchestrator import TaskOrchestrator
 from .registry import ProjectRegistry
 from .database import create_store
+from .preflight import build_preflight_report
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,6 +25,7 @@ def _setup():
 def main() -> None:
     parser = argparse.ArgumentParser(prog="ai-team", description="AI TEAM Control Plane utilities")
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("preflight", help="Validate production configuration shape without connecting to services")
     sub.add_parser("check-registry", help="Validate the project registry and show its isolation status")
     sub.add_parser("verify-audit", help="Recompute and validate the append-only audit hash chain")
     sub.add_parser("snapshot", help="Print a safe JSON snapshot of the project registry")
@@ -37,6 +39,13 @@ def main() -> None:
     if args.command == "serve":
         import uvicorn
         uvicorn.run("ai_team_control_plane.api:app", host=args.host, port=args.port, reload=False)
+        return
+
+    if args.command == "preflight":
+        result = build_preflight_report()
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        if not result["configuration_valid"]:
+            raise SystemExit(2)
         return
 
     registry, store, _, _ = _setup()
