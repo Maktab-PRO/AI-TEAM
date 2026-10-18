@@ -31,7 +31,7 @@ def _principal_is_valid(policy: object, active_project_ids: set[str]) -> bool:
         or any(ord(ch) < 32 for ch in actor)
     ):
         return False
-    if role not in _ALLOWED_ROLES:
+    if not isinstance(role, str) or role not in _ALLOWED_ROLES:
         return False
     if (
         not isinstance(projects, list)
@@ -43,6 +43,49 @@ def _principal_is_valid(policy: object, active_project_ids: set[str]) -> bool:
     if role == "platform_admin":
         return projects == ["*"]
     return "*" not in projects and all(project in active_project_ids for project in projects)
+
+
+def _valid_project_scopes(env: dict[str, str], active_project_ids: set[str]) -> bool:
+    policies: list[dict] = []
+    token_map_raw = env.get("AI_TEAM_API_TOKENS", "").strip()
+    if token_map_raw:
+        try:
+            token_map = json.loads(token_map_raw)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(token_map, dict) or not token_map:
+            return False
+        if any(not isinstance(policy, dict) for policy in token_map.values()):
+            return False
+        policies.extend(token_map.values())
+
+    single_token = env.get("AI_TEAM_API_TOKEN", "").strip()
+    if single_token:
+        policies.append({
+            "role": env.get("AI_TEAM_API_ROLE", "").strip(),
+            "projects": [part.strip() for part in env.get("AI_TEAM_API_PROJECTS", "").split(",") if part.strip()],
+        })
+
+    if not policies:
+        return False
+    for policy in policies:
+        role = policy.get("role")
+        projects = policy.get("projects")
+        if not isinstance(role, str) or role not in _ALLOWED_ROLES:
+            return False
+        if (
+            not isinstance(projects, list)
+            or not projects
+            or any(not isinstance(project, str) or not project or project != project.strip() for project in projects)
+            or len(projects) != len(set(projects))
+        ):
+            return False
+        if role == "platform_admin":
+            if projects != ["*"]:
+                return False
+        elif "*" in projects or not all(project in active_project_ids for project in projects):
+            return False
+    return True
 
 
 def _valid_api_credentials(env: dict[str, str], active_project_ids: set[str]) -> bool:
@@ -225,6 +268,15 @@ def build_preflight_report(environment: dict[str, str] | None = None) -> dict:
         "DATABASE_URL has a PostgreSQL URL and explicit TLS mode."
         if db_valid
         else "DATABASE_URL must be a PostgreSQL URL with a host, database path, and sslmode=require, verify-ca, or verify-full.",
+    ))
+
+    scope_valid = _valid_project_scopes(env, active_project_ids)
+    checks.append(_check(
+        "project_scope",
+        scope_valid,
+        "Token roles are paired with explicit registered active project scopes."
+        if scope_valid
+        else "API tokens need valid explicit project scopes; only platform_admin may use the scope '*'.",
     ))
 
     api_valid = _valid_api_credentials(env, active_project_ids)
