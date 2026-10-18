@@ -22,6 +22,8 @@ CONFIG_KEYS = (
     "AI_TEAM_GITHUB_TOKEN",
     "AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST",
     "AI_TEAM_RENDER_HEALTH_ALLOWLIST",
+    "AI_TEAM_RATE_LIMIT_PER_MINUTE",
+    "AI_TEAM_RATE_LIMIT_HASH_KEY",
 )
 
 
@@ -52,6 +54,8 @@ def valid_production_environment() -> dict[str, str]:
         "AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST": json.dumps(
             {"Maktab-PRO/AI-TEAM": [".github/workflows/ci.yml"]}
         ),
+        "AI_TEAM_RATE_LIMIT_PER_MINUTE": "120",
+        "AI_TEAM_RATE_LIMIT_HASH_KEY": "synthetic-rate-limit-hash-key-" + "r" * 32,
     }
 
 
