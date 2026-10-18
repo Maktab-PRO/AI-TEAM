@@ -58,3 +58,17 @@ For each gate, record:
 - No production runtime, database, Redis service, domain, secret, or deploy target has been provisioned by this phase.
 
 Update this section only with newly checked evidence. Do not convert a planned task into a PASS.
+
+
+## Follow-up implementation and CI evidence — 2026-10-18
+
+The later code candidate `36c13d8369b22c368ed09a448f052c186f7ce463` passed both push and pull-request CI:
+
+- [Push CI for the candidate SHA](https://github.com/Maktab-PRO/AI-TEAM/actions/runs/39096811678) — success.
+- [Pull-request CI for the same SHA](https://github.com/Maktab-PRO/AI-TEAM/actions/runs/39096814488) — success.
+- Python 3.11 and 3.12 full test suites, Bandit, `pip-audit`, isolated PostgreSQL backup/restore, PostgreSQL concurrency tests, and live Redis 7 integration passed.
+- The production configuration preflight checks required settings without printing values or contacting providers. It does not prove that a database or credential works.
+- The API now uses a shared database-backed fixed-window request counter for the direct client peer and bearer-token HMAC fingerprint. The raw peer identity and raw bearer token are not stored. Production requires `AI_TEAM_RATE_LIMIT_PER_MINUTE` and a separate 32+ character `AI_TEAM_RATE_LIMIT_HASH_KEY`.
+- Rate-limit tests cover fixed-window expiry, concurrent SQLite/PostgreSQL requests, API 429/Retry-After behavior, and missing production HMAC configuration. Ingress/client-IP behavior and edge protection against rotating unauthenticated clients still require validation in private staging.
+
+These CI runs used isolated CI infrastructure. **They do not mean production is deployed or approved.** There is still no production runtime, dedicated production database/Redis, real GitHub provider token, registered human identity provider, or production backup/restore drill. PR #1 remains Draft and unmerged.
