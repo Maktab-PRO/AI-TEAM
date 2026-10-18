@@ -127,3 +127,23 @@ def test_preflight_rejects_non_tls_database_url_without_echoing_it(
     assert report["configuration_valid"] is False
     assert "sensitive-password" not in result.stdout
     assert "sensitive-user" not in result.stdout
+
+
+def test_preflight_rejects_malformed_role_policy_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = valid_production_environment()
+    env["AI_TEAM_API_TOKENS"] = json.dumps({
+        "synthetic-map-token-" + "z" * 40: {
+            "actor": "malformed-role",
+            "role": [],
+            "projects": ["ai-team-control-plane"],
+        }
+    })
+
+    result = run_preflight(monkeypatch, **env)
+
+    assert result.returncode == 2
+    report = json.loads(result.stdout)
+    assert report["configuration_valid"] is False
+    assert "Traceback" not in result.stderr
