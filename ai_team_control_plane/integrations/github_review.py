@@ -156,6 +156,18 @@ class GitHubPullRequestReviewVerifier:
             raise EvidenceRejected("Pull request author identity is missing; no review evidence was recorded.")
 
         reviews = self._get_all_reviews(owner, repository, pull_number)
+
+        # Re-check the repository branch after fetching all reviews. The PR object
+        # fetched earlier can become stale while paginated reviews are being read.
+        current_branch = self._get_json(
+            f"{self.API_ROOT}/repos/{api_repo}/branches/{quote(task['branch'], safe='')}"
+        )
+        current_commit = current_branch.get("commit") if isinstance(current_branch.get("commit"), dict) else {}
+        if current_branch.get("name") != task["branch"] or current_commit.get("sha") != head_sha:
+            raise EvidenceRejected(
+                "Pull request branch head changed during review verification; no trusted evidence was recorded."
+            )
+
         latest_by_reviewer: dict[str, dict[str, Any]] = {}
         for review in reviews:
             user = review.get("user") if isinstance(review.get("user"), dict) else {}
