@@ -32,10 +32,11 @@ A gate is **PASS** only when its evidence is recorded with timestamp, responsibl
 2. **Provision isolated infrastructure:** create a dedicated AI TEAM PostgreSQL database and private runtime. Redis is optional until a concrete event consumer is enabled. Never point `DATABASE_URL` at an existing product database.
 3. **Configure secrets out of band:** generate tokens locally or in the host secret manager; configure fixed roles and exact project scopes. Never paste secret values into chat, GitHub issues, source files, or CI logs.
 4. **Configure provider verification minimally:** grant the GitHub verifier read-only access only. Add exact workflow paths only after reviewing their checks. Keep Render health targets empty until a target is explicitly authorized and validated.
-5. **Deploy to private staging only after G0–G5 are satisfied.** Verify startup, migrations, auth failures, project-scope denials, health endpoints, logs, and rollback.
-6. **Run a real recovery drill:** back up staging/production-like data, restore into a different isolated database, and verify record counts plus the audit chain. Never experiment on the source database.
-7. **Complete security/observability review (G8–G9).** Public exposure is prohibited until the identity, rate-limiting, TLS, and monitoring gaps are resolved.
-8. **Release only with explicit human authorization (G10).** This runbook itself grants no permission to deploy, merge, rotate secrets, or perform destructive operations.
+5. **Run the local configuration preflight:** execute `python -m ai_team_control_plane.cli preflight` in the same environment where the production-like variables are configured. A zero exit validates only configuration shape; it does not prove credentials, databases, provider permissions, network, or health targets work. Any failure blocks staging.
+6. **Deploy to private staging only after G0–G5 and the config preflight pass.** Verify startup, migrations, auth failures, project-scope denials, health endpoints, logs, and rollback.
+7. **Run a real recovery drill:** back up staging/production-like data, restore into a different isolated database, and verify record counts plus the audit chain. Never experiment on the source database.
+8. **Complete security/observability review (G8–G9).** Public exposure is prohibited until the identity, rate-limiting, TLS, and monitoring gaps are resolved.
+9. **Release only with explicit human authorization (G10).** This runbook itself grants no permission to deploy, merge, rotate secrets, or perform destructive operations.
 
 ## Evidence record template
 
