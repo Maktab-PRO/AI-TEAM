@@ -99,3 +99,8 @@ python -m ai_team_control_plane.cli preflight
 ```
 
 The command validates configuration shape only: PostgreSQL URL/TLS mode, token-to-actor/role/project scopes, GitHub token presence and exact workflow allowlist syntax, a configured request limit and HMAC key, optional Redis TLS URL, and optional Render health targets. The API enforces a shared database-backed fixed-window limit keyed by HMAC fingerprints of the direct client peer and bearer token; raw peer addresses and bearer tokens are not stored in the rate-limit table. It does not print secret values, contact external services, prove provider credentials work, or approve/deploy a release. It exits with code `2` if configuration checks fail. Even if it exits successfully, the G0–G10 release gates in `docs/PRODUCTION-READINESS.md` still apply. Validate client-IP/proxy behavior in private staging before relying on this limit in a hosted environment.
+
+
+## Human identity and ingress security
+
+Human login is intentionally not enabled yet. The provider-neutral OIDC, role-mapping, session, and trusted-proxy requirements are documented in [docs/IDENTITY-AND-EDGE-SECURITY.md](docs/IDENTITY-AND-EDGE-SECURITY.md) and tracked in [Issue #3](https://github.com/Maktab-PRO/AI-TEAM/issues/3). Do not expose the service publicly until a provider/domain is registered and the remaining identity and ingress gates are verified.
