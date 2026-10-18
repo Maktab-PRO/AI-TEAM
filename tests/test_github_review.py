@@ -240,6 +240,38 @@ def test_verifier_rejects_oversized_github_review_response(system):
         verifier(service, opener).verify_and_record(task["id"], pull_url=PULL_URL, actor="review-verifier")
     assert store.list_evidence(task["id"]) == []
 
+
+
+def test_verifier_rejects_when_head_branch_moves_during_review_check(system):
+    _, store, _, service = system
+    task = task_for(service, key="github-review-branch-moves-during-check")
+    calls = []
+
+    def opener(request, timeout=10):
+        url = request.full_url
+        calls.append(url)
+        if url.endswith("/pulls/42"):
+            return FakeResponse(pr_payload())
+        if "/pulls/42/reviews?" in url:
+            return FakeResponse([approval()])
+        if "/branches/ai-team%2Fgithub-review" in url:
+            return FakeResponse({
+                "name": "ai-team/github-review",
+                "commit": {"sha": "b" * 40},
+            })
+        raise AssertionError(f"Unexpected GitHub API URL: {url}")
+
+    with pytest.raises(EvidenceRejected, match="branch head changed during review verification"):
+        verifier(service, opener).verify_and_record(
+            task["id"],
+            pull_url=PULL_URL,
+            actor="review-verifier",
+        )
+
+    assert any("/branches/" in url for url in calls)
+    assert store.list_evidence(task["id"]) == []
+
+
 def test_verifier_rejects_non_github_pull_url(system):
     _, _, _, service = system
     task = task_for(service, key="github-review-host-attack")
