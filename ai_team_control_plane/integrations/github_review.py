@@ -159,17 +159,6 @@ class GitHubPullRequestReviewVerifier:
 
         reviews = self._get_all_reviews(owner, repository, pull_number)
 
-        # Re-check the repository branch after fetching all reviews. The PR object
-        # fetched earlier can become stale while paginated reviews are being read.
-        current_branch = self._get_json(
-            f"{self.API_ROOT}/repos/{api_repo}/branches/{quote(task['branch'], safe='')}"
-        )
-        current_commit = current_branch.get("commit") if isinstance(current_branch.get("commit"), dict) else {}
-        if current_branch.get("name") != task["branch"] or current_commit.get("sha") != head_sha:
-            raise EvidenceRejected(
-                "Pull request branch head changed during review verification; no trusted evidence was recorded."
-            )
-
         latest_by_reviewer: dict[str, dict[str, Any]] = {}
         for review in reviews:
             user = review.get("user") if isinstance(review.get("user"), dict) else {}
@@ -218,6 +207,43 @@ class GitHubPullRequestReviewVerifier:
         if not approved_reviewers:
             raise EvidenceRejected(
                 "No non-author APPROVED review applies to the current pull request head commit; no trusted evidence was recorded."
+            )
+
+        # Re-read the PR after reviewing all paginated reviews. It might have been
+        # made draft, closed, merged, or updated while this verification was running.
+        final_pr = self._get_json(f"{self.API_ROOT}/repos/{api_repo}/pulls/{pull_number}")
+        if not isinstance(final_pr, dict):
+            raise EvidenceRejected("GitHub returned an invalid final pull request resource.")
+        final_head = final_pr.get("head") if isinstance(final_pr.get("head"), dict) else {}
+        final_base = final_pr.get("base") if isinstance(final_pr.get("base"), dict) else {}
+        final_head_repo = final_head.get("repo") if isinstance(final_head.get("repo"), dict) else {}
+        final_base_repo = final_base.get("repo") if isinstance(final_base.get("repo"), dict) else {}
+        if (
+            final_pr.get("number") != pull_number
+            or final_pr.get("html_url") != pull_url
+            or final_pr.get("state") != "open"
+            or final_pr.get("merged") is not False
+            or final_pr.get("draft") is not False
+            or final_head.get("ref") != task["branch"]
+            or final_head.get("sha") != head_sha
+            or final_head_repo.get("full_name") != task["repository"]
+            or final_base.get("ref") != project.default_branch
+            or final_base_repo.get("full_name") != task["repository"]
+        ):
+            raise EvidenceRejected(
+                "Pull request changed during review verification; no trusted evidence was recorded."
+            )
+
+        # The latest branch ref must still point to the exact commit reviewed above.
+        current_branch = self._get_json(
+            f"{self.API_ROOT}/repos/{api_repo}/branches/{quote(task['branch'], safe='')}"
+        )
+        if not isinstance(current_branch, dict):
+            raise EvidenceRejected("GitHub returned an invalid branch resource; no trusted evidence was recorded.")
+        current_commit = current_branch.get("commit") if isinstance(current_branch.get("commit"), dict) else {}
+        if current_branch.get("name") != task["branch"] or current_commit.get("sha") != head_sha:
+            raise EvidenceRejected(
+                "Pull request branch head changed during review verification; no trusted evidence was recorded."
             )
 
         notes = (
