@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .boundary import BoundaryGuard
@@ -17,6 +20,7 @@ from .database import create_store
 from .integrations.github_evidence import GitHubActionsEvidenceVerifier
 from .integrations.github_review import GitHubPullRequestReviewVerifier
 from .integrations.render_health import RenderHealthEvidenceVerifier
+from .rate_limiting import RateLimitConfigurationError, get_rate_limit_config, rate_limit_bucket_key
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +34,68 @@ app = FastAPI(
     version="0.1.0",
     description="Fail-closed project boundaries, durable task orchestration, evidence gates, and tamper-evident audit events.",
 )
+
+logger = logging.getLogger(__name__)
+
+
+@app.middleware("http")
+async def enforce_database_rate_limit(request: Request, call_next):
+    try:
+        limit, hash_key = get_rate_limit_config()
+    except RateLimitConfigurationError:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Production rate limiting is not configured."},
+        )
+
+    now = int(time.time())
+    peer = request.client.host if request.client and request.client.host else "unknown"
+    bucket_keys = [rate_limit_bucket_key(hash_key, "client", peer)]
+    authorization = request.headers.get("authorization", "")
+    auth_parts = authorization.split(None, 1)
+    if (
+        len(auth_parts) == 2
+        and auth_parts[0].casefold() == "bearer"
+        and auth_parts[1]
+        and len(auth_parts[1]) <= 4096
+    ):
+        bucket_keys.append(rate_limit_bucket_key(hash_key, "token", auth_parts[1]))
+
+    try:
+        outcomes = [
+            store.consume_rate_limit(key, limit=limit, window_seconds=60, now=now)
+            for key in bucket_keys
+        ]
+    except Exception as exc:
+        # Never log database URLs, raw tokens, client identifiers, or driver error text.
+        logger.warning("Database-backed rate limiting failed (error_type=%s)", type(exc).__name__)
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Rate limiting is temporarily unavailable."},
+        )
+
+    denied = [outcome for outcome in outcomes if not outcome["allowed"]]
+    if denied:
+        retry_after = max(1, max(int(outcome["reset_at"]) for outcome in denied) - now)
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded."},
+            headers={
+                "Retry-After": str(retry_after),
+                "X-RateLimit-Limit": str(limit),
+                "X-RateLimit-Remaining": "0",
+            },
+        )
+
+    response = await call_next(request)
+    response.headers["X-RateLimit-Limit"] = str(limit)
+    response.headers["X-RateLimit-Remaining"] = str(
+        max(0, limit - max(int(outcome["count"]) for outcome in outcomes))
+    )
+    response.headers["X-RateLimit-Reset"] = str(
+        max(int(outcome["reset_at"]) for outcome in outcomes)
+    )
+    return response
 
 
 class CreateTask(BaseModel):
