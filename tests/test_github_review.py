@@ -316,7 +316,7 @@ def test_verifier_rejects_draft_pull_request(system):
     task = task_for(service, key="github-review-draft-pr")
     opener, _ = make_opener(pr=pr_payload(draft=True))
 
-    with pytest.raises(EvidenceRejected, match="draft pull request"):
+    with pytest.raises(EvidenceRejected, match="(?i)draft pull request"):
         verifier(service, opener).verify_and_record(
             task["id"],
             pull_url=PULL_URL,
