@@ -6,6 +6,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from time import time as epoch_time
 from typing import Any, Iterator
 
 
@@ -117,6 +118,15 @@ class DurableStore:
                     published_at TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox(published_at, id);
+
+                CREATE TABLE IF NOT EXISTS request_rate_limits (
+                    bucket_key TEXT PRIMARY KEY,
+                    window_start INTEGER NOT NULL,
+                    request_count INTEGER NOT NULL CHECK (request_count >= 1),
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_request_rate_limits_window
+                    ON request_rate_limits(window_start);
 
                 CREATE TRIGGER IF NOT EXISTS audit_events_no_update
                 BEFORE UPDATE ON audit_events
@@ -238,6 +248,59 @@ class DurableStore:
             previous_hash = row["event_hash"]
             total += 1
         return {"valid": True, "checked_events": total, "head_hash": previous_hash}
+
+    def consume_rate_limit(
+        self,
+        bucket_key: str,
+        *,
+        limit: int,
+        window_seconds: int = 60,
+        now: int | None = None,
+    ) -> dict:
+        """Atomically consume one fixed-window request slot across store connections."""
+        if not isinstance(bucket_key, str) or not bucket_key or len(bucket_key) > 160:
+            raise ValueError("Rate-limit bucket key must be a non-empty, bounded string.")
+        if limit < 1 or limit > 10000 or window_seconds < 1 or window_seconds > 86400:
+            raise ValueError("Rate-limit limit/window is outside the supported range.")
+
+        current_time = int(epoch_time() if now is None else now)
+        window_start = current_time - (current_time % window_seconds)
+        with self.transaction() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO request_rate_limits(bucket_key, window_start, request_count, updated_at)
+                VALUES (?, ?, 1, ?)
+                ON CONFLICT(bucket_key) DO UPDATE SET
+                    window_start = CASE
+                        WHEN request_rate_limits.window_start < excluded.window_start
+                        THEN excluded.window_start
+                        ELSE request_rate_limits.window_start
+                    END,
+                    request_count = CASE
+                        WHEN request_rate_limits.window_start < excluded.window_start
+                        THEN 1
+                        ELSE request_rate_limits.request_count + 1
+                    END,
+                    updated_at = excluded.updated_at
+                RETURNING window_start, request_count
+                """,
+                (bucket_key, window_start, utc_now()),
+            ).fetchone()
+            cleanup_count = getattr(self, "_rate_limit_cleanup_counter", 0) + 1
+            self._rate_limit_cleanup_counter = cleanup_count
+            if cleanup_count % 100 == 0:
+                conn.execute(
+                    "DELETE FROM request_rate_limits WHERE window_start < ?",
+                    (window_start - (window_seconds * 2),),
+                )
+
+        request_count = int(row["request_count"])
+        reset_at = int(row["window_start"]) + window_seconds
+        return {
+            "allowed": request_count <= limit,
+            "count": request_count,
+            "reset_at": reset_at,
+        }
 
     def list_outbox(self, limit: int = 100) -> list[dict]:
         with self.connection() as conn:
