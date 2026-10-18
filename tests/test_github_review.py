@@ -115,7 +115,7 @@ def test_verifier_records_trusted_review_for_exact_current_head(system):
     assert result["head_sha"] == HEAD_SHA
     assert result["approved_reviewers"] == ["independent-reviewer"]
     assert result["recorded_kind"] == "review_approved"
-    assert len(calls) == 3
+    assert len(calls) == 4
     evidence = store.list_evidence(task["id"])
     assert len(evidence) == 1
     assert evidence[0]["kind"] == "review_approved"
