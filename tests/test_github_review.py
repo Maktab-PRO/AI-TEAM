@@ -277,6 +277,37 @@ def test_verifier_rejects_when_head_branch_moves_during_review_check(system):
     assert store.list_evidence(task["id"]) == []
 
 
+
+
+def test_reviewer_identity_case_changes_do_not_resurrect_dismissed_approval(system):
+    _, store, _, service = system
+    task = task_for(service, key="github-review-case-folded-reviewer")
+    reviews = [
+        approval(
+            login="ReviewBot",
+            state="APPROVED",
+            review_id=100,
+            submitted_at="2026-10-17T10:00:00Z",
+        ),
+        approval(
+            login="reviewbot",
+            state="DISMISSED",
+            review_id=101,
+            submitted_at="2026-10-17T11:00:00Z",
+        ),
+    ]
+    opener, _ = make_opener(reviews=reviews)
+
+    with pytest.raises(EvidenceRejected, match="current pull request head commit"):
+        verifier(service, opener).verify_and_record(
+            task["id"],
+            pull_url=PULL_URL,
+            actor="review-verifier",
+        )
+
+    assert store.list_evidence(task["id"]) == []
+
+
 def test_verifier_rejects_non_github_pull_url(system):
     _, _, _, service = system
     task = task_for(service, key="github-review-host-attack")
