@@ -83,3 +83,8 @@ The API binds to `127.0.0.1:8000` by default. Local development uses SQLite unle
 ## Development rule
 
 **One stage → deep inspection → narrow fix → focused tests → full CI → next stage.** Do not bind AI TEAM to any existing product repository. The dedicated `Maktab-PRO/AI-TEAM` repository is registered under `ai-team-control-plane`. For production, configure a separate PostgreSQL database using `DATABASE_URL`, run the PostgreSQL integration and backup/restore CI checks, and keep the API private until an external identity provider, rate limits, TLS, monitoring, real-host backup/restore drills, and operational recovery are addressed. Provider evidence adapters must have explicit allowlists and real read-only credentials set by the operator. Keep each project boundary exact and testable.
+
+
+## Production readiness
+
+The release is **blocked until every required gate is evidenced**. Follow [`docs/PRODUCTION-READINESS.md`](docs/PRODUCTION-READINESS.md) for the fail-closed G0–G10 sequence. CI success on ephemeral services is not production deployment or a production recovery drill.
