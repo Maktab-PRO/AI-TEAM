@@ -21,7 +21,7 @@ class RedisOutboxPublisher:
     def publish_pending(self, limit: int = 100) -> dict:
         published = []
         for event in self.store.list_outbox(limit=limit):
-            # Publishing and SQLite acknowledgement cannot share one transaction.
+            # The relational outbox acknowledgement cannot share a transaction with Redis XADD.
             # A crash between XADD and acknowledgement may duplicate a message; outbox_id is the dedupe key.
             self.redis.xadd(
                 self.stream_name,
