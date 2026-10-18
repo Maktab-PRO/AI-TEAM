@@ -154,3 +154,25 @@ def test_postgres_parallel_audit_appends_remain_one_valid_chain(postgres_system)
     result = store.verify_audit_chain()
     assert result["valid"] is True
     assert result["checked_events"] >= len(tasks)
+
+
+def test_postgres_rate_limit_counter_is_atomic_across_connections(postgres_system):
+    _, store, _, _ = postgres_system
+    bucket_key = f"token:rate-limit-{uuid.uuid4()}"
+    now = int(__import__("time").time())
+    limit = 5
+
+    def consume(_index):
+        return store.consume_rate_limit(
+            bucket_key,
+            limit=limit,
+            window_seconds=60,
+            now=now,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(consume, range(24)))
+
+    assert sum(item["allowed"] for item in results) == limit
+    assert sorted(item["count"] for item in results) == list(range(1, 25))
+    assert {item["reset_at"] for item in results} == {now - (now % 60) + 60}
