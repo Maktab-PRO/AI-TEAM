@@ -7,7 +7,7 @@ from ai_team_control_plane import api
 def setup_api(monkeypatch, system):
     registry, store, guard, orchestrator = system
     monkeypatch.setenv("APP_ENV", "development")
-    for name in ("AI_TEAM_API_TOKEN", "AI_TEAM_API_TOKENS", "AI_TEAM_API_ACTOR", "AI_TEAM_API_ROLE", "AI_TEAM_API_PROJECTS", "AI_TEAM_GITHUB_TOKEN", "AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST", "AI_TEAM_RENDER_HEALTH_ALLOWLIST"):
+    for name in ("AI_TEAM_API_TOKEN", "AI_TEAM_API_TOKENS", "AI_TEAM_API_ACTOR", "AI_TEAM_API_ROLE", "AI_TEAM_API_PROJECTS", "AI_TEAM_GITHUB_TOKEN", "AI_TEAM_GITHUB_WORKFLOW_ALLOWLIST", "AI_TEAM_RENDER_HEALTH_ALLOWLIST", "AI_TEAM_RATE_LIMIT_PER_MINUTE", "AI_TEAM_RATE_LIMIT_HASH_KEY"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(api, "registry", registry)
     monkeypatch.setattr(api, "store", store)
