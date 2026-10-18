@@ -18,7 +18,7 @@
 
 ## 5. Durable State
 
-**Invariant:** task state, dependency relation, audit event, and outbox record are committed in the same database transaction when they describe one state change. SQLite WAL/foreign keys/transactions provide local development durability. PostgreSQL uses row-level task locks plus advisory locks for idempotency keys and audit-chain serialization. Redis is not authoritative. `DATABASE_URL` must refer to a dedicated AI TEAM PostgreSQL database, never an existing product database.
+**Invariant:** task state, dependency relation, audit event, and outbox record are committed in the same database transaction when they describe one state change. SQLite WAL/foreign keys/transactions provide local development durability. PostgreSQL uses row-level task locks plus advisory locks for idempotency keys and audit-chain serialization. Redis is not authoritative. `DATABASE_URL` must refer to a dedicated AI TEAM PostgreSQL database, never an existing product database. Redis publication is at-least-once: a failure after `XADD` but before relational acknowledgement can result in a duplicate Stream entry, so consumers must deduplicate with the stable `outbox_id`. CI tests this crash window against an ephemeral Redis service.
 
 ## 6. Audit Log
 
