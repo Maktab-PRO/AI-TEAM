@@ -81,6 +81,11 @@ def make_opener(pr=None, reviews=None):
             return FakeResponse(pr if pr is not None else pr_payload())
         if "/pulls/42/reviews?" in url:
             return FakeResponse(reviews if reviews is not None else [approval()])
+        if "/branches/ai-team%2Fgithub-review" in url:
+            return FakeResponse({
+                "name": "ai-team/github-review",
+                "commit": {"sha": HEAD_SHA},
+            })
         raise AssertionError(f"Unexpected GitHub API URL: {url}")
 
     return opener, calls
@@ -109,7 +114,7 @@ def test_verifier_records_trusted_review_for_exact_current_head(system):
     assert result["head_sha"] == HEAD_SHA
     assert result["approved_reviewers"] == ["independent-reviewer"]
     assert result["recorded_kind"] == "review_approved"
-    assert len(calls) == 2
+    assert len(calls) == 3
     evidence = store.list_evidence(task["id"])
     assert len(evidence) == 1
     assert evidence[0]["kind"] == "review_approved"
