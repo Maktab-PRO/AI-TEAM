@@ -38,6 +38,10 @@ A gate is **PASS** only when its evidence is recorded with timestamp, responsibl
 8. **Complete security/observability review (G8–G9).** Public exposure is prohibited until external human identity, ingress/proxy behavior, TLS, and monitoring have been independently verified. Database-backed throttling is implemented in code but has not been verified behind a production ingress.
 9. **Release only with explicit human authorization (G10).** This runbook itself grants no permission to deploy, merge, rotate secrets, or perform destructive operations.
 
+## Next identity gate
+
+The provider-neutral identity/ingress contract is in [`docs/IDENTITY-AND-EDGE-SECURITY.md`](IDENTITY-AND-EDGE-SECURITY.md). Implementation prerequisites and acceptance tests are tracked in [Issue #3](https://github.com/Maktab-PRO/AI-TEAM/issues/3). The provider and callback domain have not been selected; this gate remains BLOCKED.
+
 ## Evidence record template
 
 For each gate, record:
