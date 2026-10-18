@@ -308,6 +308,23 @@ def test_reviewer_identity_case_changes_do_not_resurrect_dismissed_approval(syst
     assert store.list_evidence(task["id"]) == []
 
 
+
+
+def test_verifier_rejects_draft_pull_request(system):
+    _, store, _, service = system
+    task = task_for(service, key="github-review-draft-pr")
+    opener, _ = make_opener(pr=pr_payload(draft=True))
+
+    with pytest.raises(EvidenceRejected, match="draft pull request"):
+        verifier(service, opener).verify_and_record(
+            task["id"],
+            pull_url=PULL_URL,
+            actor="review-verifier",
+        )
+
+    assert store.list_evidence(task["id"]) == []
+
+
 def test_verifier_rejects_non_github_pull_url(system):
     _, _, _, service = system
     task = task_for(service, key="github-review-host-attack")
