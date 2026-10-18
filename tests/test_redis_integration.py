@@ -62,7 +62,7 @@ def test_live_redis_stream_publish_and_acknowledgement(system, redis_client):
         second = publisher.publish_pending(limit=10)
 
         assert first["published_count"] == 1
-        assert first["outbox_ids"] == [first["outbox_ids"][0]]
+        assert len(first["outbox_ids"]) == 1
         assert second["published_count"] == 0
         assert first["delivery"] == "at_least_once"
 
