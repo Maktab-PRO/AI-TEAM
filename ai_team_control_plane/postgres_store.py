@@ -187,6 +187,15 @@ class PostgresStore(DurableStore):
             )
             """,
             "CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox(published_at, id)",
+            """
+            CREATE TABLE IF NOT EXISTS request_rate_limits (
+                bucket_key TEXT PRIMARY KEY,
+                window_start BIGINT NOT NULL,
+                request_count INTEGER NOT NULL CHECK (request_count >= 1),
+                updated_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_request_rate_limits_window ON request_rate_limits(window_start)",
             "ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS hash_version SMALLINT NOT NULL DEFAULT 1 CHECK (hash_version IN (1,2))",
             """
             CREATE OR REPLACE FUNCTION ai_team_prevent_audit_mutation()
