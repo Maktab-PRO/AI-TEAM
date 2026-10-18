@@ -183,19 +183,20 @@ class GitHubPullRequestReviewVerifier:
                 continue
             if state.upper() not in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
                 continue
-            existing = latest_by_reviewer.get(login)
+            reviewer_key = login.casefold()
+            existing = latest_by_reviewer.get(reviewer_key)
             current_order = (submitted_at, int(review.get("id", 0)) if str(review.get("id", "")).isdigit() else 0)
             existing_order = (
                 existing.get("submitted_at", ""),
                 int(existing.get("id", 0)) if str(existing.get("id", "")).isdigit() else 0,
             ) if existing else ("", 0)
             if existing is None or current_order > existing_order:
-                latest_by_reviewer[login] = review
+                latest_by_reviewer[reviewer_key] = review
 
         current_changes_requested = [
-            login
-            for login, review in latest_by_reviewer.items()
-            if login.casefold() != author_login.casefold()
+            str((review.get("user") or {}).get("login", reviewer_key))
+            for reviewer_key, review in latest_by_reviewer.items()
+            if reviewer_key != author_login.casefold()
             and str(review.get("state", "")).upper() == "CHANGES_REQUESTED"
         ]
         if current_changes_requested:
@@ -206,9 +207,9 @@ class GitHubPullRequestReviewVerifier:
             )
 
         approved_reviewers = sorted(
-            login
-            for login, review in latest_by_reviewer.items()
-            if login.casefold() != author_login.casefold()
+            str((review.get("user") or {}).get("login", reviewer_key))
+            for reviewer_key, review in latest_by_reviewer.items()
+            if reviewer_key != author_login.casefold()
             and str(review.get("state", "")).upper() == "APPROVED"
             and review.get("commit_id") == head_sha
         )
