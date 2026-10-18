@@ -326,6 +326,40 @@ def test_verifier_rejects_draft_pull_request(system):
     assert store.list_evidence(task["id"]) == []
 
 
+
+
+def test_verifier_rejects_pull_request_state_change_during_review_check(system):
+    _, store, _, service = system
+    task = task_for(service, key="github-review-state-changes-mid-check")
+    pr_responses = [pr_payload(), pr_payload(draft=True)]
+    calls = []
+
+    def opener(request, timeout=10):
+        url = request.full_url
+        calls.append(url)
+        if url.endswith("/pulls/42"):
+            payload = pr_responses.pop(0) if pr_responses else pr_payload(draft=True)
+            return FakeResponse(payload)
+        if "/pulls/42/reviews?" in url:
+            return FakeResponse([approval()])
+        if "/branches/ai-team%2Fgithub-review" in url:
+            return FakeResponse({
+                "name": "ai-team/github-review",
+                "commit": {"sha": HEAD_SHA},
+            })
+        raise AssertionError(f"Unexpected GitHub API URL: {url}")
+
+    with pytest.raises(EvidenceRejected, match="pull request changed during review verification"):
+        verifier(service, opener).verify_and_record(
+            task["id"],
+            pull_url=PULL_URL,
+            actor="review-verifier",
+        )
+
+    assert calls.count("https://api.github.com/repos/Maktab-PRO/Axsikent-IT/pulls/42") == 2
+    assert store.list_evidence(task["id"]) == []
+
+
 def test_verifier_rejects_non_github_pull_url(system):
     _, _, _, service = system
     task = task_for(service, key="github-review-host-attack")
