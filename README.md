@@ -88,3 +88,14 @@ The API binds to `127.0.0.1:8000` by default. Local development uses SQLite unle
 ## Production readiness
 
 The release is **blocked until every required gate is evidenced**. Follow [`docs/PRODUCTION-READINESS.md`](docs/PRODUCTION-READINESS.md) for the fail-closed G0–G10 sequence. CI success on ephemeral services is not production deployment or a production recovery drill.
+
+
+## Production configuration preflight
+
+Once a private staging environment's variables are configured, run:
+
+```bash
+python -m ai_team_control_plane.cli preflight
+```
+
+The command validates configuration shape only: PostgreSQL URL/TLS mode, token-to-actor/role/project scopes, GitHub token presence and exact workflow allowlist syntax, optional Redis TLS URL, and optional Render health targets. It does not print secret values, contact external services, prove provider credentials work, or approve/deploy a release. It exits with code `2` if configuration checks fail. Even if it exits successfully, the G0–G10 release gates in `docs/PRODUCTION-READINESS.md` still apply.
