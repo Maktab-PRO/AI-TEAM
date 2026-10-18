@@ -46,6 +46,7 @@ def pr_payload(**changes):
         "html_url": PULL_URL,
         "state": "open",
         "merged": False,
+        "draft": False,
         "user": {"login": "pr-author"},
         "head": {
             "ref": "ai-team/github-review",
