@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .registry import ProjectRegistry
+from .rate_limiting import RateLimitConfigurationError, get_rate_limit_config
 
 ROOT = Path(__file__).resolve().parents[1]
 _ALLOWED_ROLES = {"platform_admin", "project_admin", "worker", "reviewer", "read_only"}
@@ -242,6 +243,19 @@ def build_preflight_report(environment: dict[str, str] | None = None) -> dict:
         "APP_ENV is set to production." if app_env == "production" else "APP_ENV must equal 'production' for this preflight.",
     ))
 
+    try:
+        get_rate_limit_config(env)
+        rate_limit_valid = True
+    except RateLimitConfigurationError:
+        rate_limit_valid = False
+    checks.append(_check(
+        "rate_limit_config",
+        rate_limit_valid,
+        "A supported per-minute limit and a 32+ character HMAC key are configured."
+        if rate_limit_valid
+        else "Configure AI_TEAM_RATE_LIMIT_PER_MINUTE (1–10000) and a 32+ character AI_TEAM_RATE_LIMIT_HASH_KEY in the secret environment.",
+    ))
+
     registry_path = Path(env.get("AI_TEAM_REGISTRY_PATH", str(ROOT / "config" / "projects.json")))
     try:
         registry = ProjectRegistry(registry_path)
@@ -346,6 +360,6 @@ def build_preflight_report(environment: dict[str, str] | None = None) -> dict:
         "checks": checks,
         "note": (
             "This configuration preflight does not verify live services or credentials, external identity, "
-            "monitoring, backups, or release authorization. It never approves or deploys a production release."
+            "monitoring, backups, proxy/client-IP behavior, or release authorization. It never approves or deploys a production release."
         ),
     }
