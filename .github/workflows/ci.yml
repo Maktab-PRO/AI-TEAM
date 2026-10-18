@@ -51,6 +51,33 @@ jobs:
       - name: Audit declared dependencies
         run: pip-audit -r requirements.txt
 
+  redis-integration:
+    runs-on: ubuntu-24.04
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AI_TEAM_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install package, test, and Redis dependencies
+        run: python -m pip install -e ".[test,redis]"
+      - name: Run live Redis Stream and crash-window tests
+        run: python -m pytest -q tests/test_redis_integration.py
+
   postgres-integration:
     runs-on: ubuntu-24.04
     services:
