@@ -138,12 +138,14 @@ def _valid_database_url(value: str) -> bool:
         port = parsed.port
     except ValueError:
         return False
+    ssl_modes = query.get("sslmode", [])
     return (
         parsed.scheme in {"postgres", "postgresql"}
         and bool(parsed.hostname)
         and parsed.path not in {"", "/"}
         and port != 0
-        and query.get("sslmode", [""])[-1].lower() in _DB_TLS_MODES
+        and len(ssl_modes) == 1
+        and ssl_modes[0].lower() in _DB_TLS_MODES
     )
 
 
