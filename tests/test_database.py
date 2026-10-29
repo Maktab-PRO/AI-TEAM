@@ -34,7 +34,7 @@ def test_production_fails_closed_without_postgresql_database_url(monkeypatch, tm
 def test_production_selects_postgresql_backend(monkeypatch):
     import ai_team_control_plane.postgres_store as postgres_module
 
-    expected_url = "postgresql://control-plane:secret@db.example.invalid/ai_team"
+    expected_url = "postgresql://control-plane:secret@db.example.invalid/ai_team?sslmode=require"
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("DATABASE_URL", expected_url)
 
