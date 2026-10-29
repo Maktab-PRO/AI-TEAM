@@ -80,11 +80,25 @@ class EvidenceGate:
                 continue
             accepted = [item for item in candidates if item["source"] in req.accepted_sources and item["trusted"]]
             if accepted:
-                # Evidence is append-only: the most recent trusted assertion for a requirement wins.
-                latest = max(accepted, key=lambda item: (item["created_at"], item["id"]))
-                if latest["status"] == "passed":
+                # Historical rows can contain equal timestamps from before evidence
+                # timestamps were made monotonic. Do not let random IDs choose a
+                # winner when conflicting trusted statuses share the latest time.
+                latest_timestamp = max(item["created_at"] for item in accepted)
+                latest = [
+                    item for item in accepted
+                    if item["created_at"] == latest_timestamp
+                ]
+                latest_statuses = {item["status"] for item in latest}
+                if len(latest_statuses) > 1:
+                    failed.append(
+                        f"{req.kind}: conflicting trusted statuses share the latest timestamp; "
+                        "chronology is ambiguous"
+                    )
                     continue
-                if latest["status"] == "failed":
+                latest_status = next(iter(latest_statuses))
+                if latest_status == "passed":
+                    continue
+                if latest_status == "failed":
                     failed.append(f"{req.kind}: latest trusted evidence failed")
                 else:
                     missing.append(f"{req.kind}: latest trusted evidence is informational, not a pass")
