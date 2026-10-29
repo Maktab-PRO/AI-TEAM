@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -546,3 +548,24 @@ def test_render_health_endpoint_fails_closed_without_allowlist(monkeypatch, syst
     )
     assert response.status_code == 503
     assert "AI_TEAM_RENDER_HEALTH_ALLOWLIST" in response.json()["detail"]
+
+def test_production_api_rejects_quarantined_project_scope(monkeypatch, system):
+    client = setup_api(monkeypatch, system)
+    token = "quarantined-scope-test-token-" + "q" * 32
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv(
+        "AI_TEAM_API_TOKENS",
+        json.dumps({
+            token: {
+                "actor": "quarantined-reader",
+                "role": "read_only",
+                "projects": ["unclassified-repository-4"],
+            }
+        }),
+    )
+
+    response = client.get("/projects", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 503
+    assert "inactive project ID" in response.json()["detail"]
+
