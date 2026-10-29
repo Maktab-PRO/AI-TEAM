@@ -39,6 +39,21 @@ def _fingerprint(body: dict) -> str:
     return hashlib.sha256(canonical_json(body).encode("utf-8")).hexdigest()
 
 
+def _next_evidence_timestamp(conn, task_id: str) -> str:
+    """Return a per-task timestamp strictly after every persisted evidence record."""
+    candidate = datetime.fromisoformat(utc_now())
+    latest_row = conn.execute(
+        "SELECT MAX(created_at) AS latest_created_at FROM evidence WHERE task_id = ?",
+        (task_id,),
+    ).fetchone()
+    latest_value = latest_row["latest_created_at"]
+    if latest_value:
+        latest = datetime.fromisoformat(latest_value)
+        if candidate <= latest:
+            candidate = latest + timedelta(microseconds=1)
+    return candidate.isoformat(timespec="microseconds")
+
+
 class TaskOrchestrator:
     def __init__(self, store: DurableStore, guard: BoundaryGuard):
         self.store = store
@@ -243,7 +258,6 @@ class TaskOrchestrator:
         if trusted and (not verified_by or source not in {"test_runner", "github_actions", "ci_provider", "github_review", "human_review", "render_health", "monitoring", "documentation_check", "security_scanner"}):
             raise EvidenceRejected("Trusted evidence must be produced by an approved verifier adapter; clients cannot self-attest trust.")
         evidence_id = str(uuid.uuid4())
-        now = utc_now()
         with self.store.transaction() as conn:
             row = self.store.lock_task(conn, task_id)
             if row is None:
@@ -251,6 +265,9 @@ class TaskOrchestrator:
             self._authorize_task_row(row)
             if row["status"] in {"verified", "cancelled"}:
                 raise StateConflict(f"Evidence cannot be changed on a {row['status']} task.")
+            # The task row is locked, so concurrent evidence writes for this task
+            # serialize in PostgreSQL; SQLite serializes its write transaction.
+            now = _next_evidence_timestamp(conn, task_id)
             conn.execute(
                 """INSERT INTO evidence(id,task_id,kind,status,uri,artifact_sha256,source,trusted,verified_by,actor,notes,created_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
