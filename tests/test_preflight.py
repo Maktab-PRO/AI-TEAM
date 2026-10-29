@@ -133,6 +133,26 @@ def test_preflight_rejects_non_tls_database_url_without_echoing_it(
     assert "sensitive-user" not in result.stdout
 
 
+def test_preflight_rejects_duplicate_database_sslmode_even_when_last_value_is_valid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = valid_production_environment()
+    env["DATABASE_URL"] = (
+        "postgresql://ai_team:synthetic-only@db.example.invalid:5432/ai_team"
+        "?sslmode=disable&sslmode=require"
+    )
+
+    result = run_preflight(monkeypatch, **env)
+
+    assert result.returncode == 2
+    report = json.loads(result.stdout)
+    assert report["configuration_valid"] is False
+    assert any(
+        item["name"] == "database_url" and item["status"] == "fail"
+        for item in report["checks"]
+    )
+
+
 def test_preflight_rejects_malformed_role_policy_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
