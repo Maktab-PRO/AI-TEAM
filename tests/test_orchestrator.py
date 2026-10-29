@@ -160,6 +160,48 @@ def test_unknown_repository_or_protected_branch_fails_before_insert(system):
     assert store.list_tasks() == []
 
 
+def test_evidence_order_is_monotonic_even_when_wall_clock_collides(monkeypatch, system):
+    import ai_team_control_plane.orchestrator as orchestrator_module
+
+    _, _, _, service = system
+    task = create_task(service, idempotency_key="evidence-timestamp-collision")
+    service.claim_task(task["id"], worker_id="worker-a", actor="worker-a")
+    service.transition(task["id"], "in_progress", actor="worker-a")
+
+    fixed_timestamp = orchestrator_module.utc_now()
+    monkeypatch.setattr(orchestrator_module, "utc_now", lambda: fixed_timestamp)
+    common = {
+        "task_id": task["id"],
+        "source": "test_runner",
+        "actor": "trusted-adapter",
+        "trusted": True,
+        "verified_by": "unit-test-verifier",
+    }
+    earlier_pass = service.record_evidence(
+        **common, kind="tests_passed", status="passed", uri="test://runs/colliding-pass"
+    )
+    later_failure = service.record_evidence(
+        **common, kind="tests_passed", status="failed", uri="test://runs/colliding-failure"
+    )
+    assert later_failure["created_at"] > earlier_pass["created_at"]
+
+    service.record_evidence(
+        **{**common, "source": "github_actions"},
+        kind="ci_passed",
+        status="passed",
+        uri="https://github.com/org/repo/actions/runs/998",
+    )
+    service.record_evidence(
+        **{**common, "source": "github_review"},
+        kind="review_approved",
+        status="passed",
+        uri="https://github.com/org/repo/pull/998",
+    )
+    service.request_verification(task["id"], actor="worker-a")
+    with pytest.raises(EvidenceRejected, match="latest trusted evidence failed"):
+        service.verify_task(task["id"], actor="evidence-gate")
+
+
 def test_latest_trusted_failure_overrides_an_older_pass(system):
     _, _, _, service = system
     task = create_task(service, idempotency_key="latest-evidence-test")
