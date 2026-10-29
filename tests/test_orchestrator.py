@@ -202,6 +202,50 @@ def test_evidence_order_is_monotonic_even_when_wall_clock_collides(monkeypatch, 
         service.verify_task(task["id"], actor="evidence-gate")
 
 
+def test_evidence_gate_fails_closed_on_conflicting_trusted_timestamp_tie(system):
+    _, store, _, service = system
+    task = create_task(service, idempotency_key="legacy-evidence-timestamp-tie")
+    service.claim_task(task["id"], worker_id="worker-a", actor="worker-a")
+    service.transition(task["id"], "in_progress", actor="worker-a")
+
+    common = {
+        "task_id": task["id"],
+        "source": "test_runner",
+        "actor": "trusted-adapter",
+        "trusted": True,
+        "verified_by": "unit-test-verifier",
+    }
+    earlier_pass = service.record_evidence(
+        **common, kind="tests_passed", status="passed", uri="test://runs/legacy-tie-pass"
+    )
+    later_failure = service.record_evidence(
+        **common, kind="tests_passed", status="failed", uri="test://runs/legacy-tie-failure"
+    )
+    service.record_evidence(
+        **{**common, "source": "github_actions"},
+        kind="ci_passed",
+        status="passed",
+        uri="https://github.com/org/repo/actions/runs/999",
+    )
+    service.record_evidence(
+        **{**common, "source": "github_review"},
+        kind="review_approved",
+        status="passed",
+        uri="https://github.com/org/repo/pull/999",
+    )
+
+    # Simulate legacy persisted rows from before per-task timestamps were monotonic.
+    with store.transaction() as conn:
+        conn.execute(
+            "UPDATE evidence SET created_at=? WHERE id IN (?, ?)",
+            (later_failure["created_at"], earlier_pass["id"], later_failure["id"]),
+        )
+
+    service.request_verification(task["id"], actor="worker-a")
+    with pytest.raises(EvidenceRejected, match="chronology is ambiguous"):
+        service.verify_task(task["id"], actor="evidence-gate")
+
+
 def test_latest_trusted_failure_overrides_an_older_pass(system):
     _, _, _, service = system
     task = create_task(service, idempotency_key="latest-evidence-test")
