@@ -40,6 +40,11 @@ logger = logging.getLogger(__name__)
 
 @app.middleware("http")
 async def enforce_database_rate_limit(request: Request, call_next):
+    # Liveness must remain independent of database-backed rate limiting.
+    # Otherwise an outage in the database also makes the process appear dead.
+    if request.url.path == "/live":
+        return await call_next(request)
+
     try:
         limit, hash_key = get_rate_limit_config()
     except RateLimitConfigurationError:
@@ -433,6 +438,12 @@ def _render_health_allowlist() -> dict[str, dict[str, str]]:
             "expected_status": expected_status,
         }
     return result
+
+@app.get("/live")
+def live() -> dict[str, str]:
+    """Report only process liveness; do not touch the database or registry."""
+    return {"status": "alive", "service": "ai-team-control-plane"}
+
 
 @app.get("/health")
 def health() -> dict[str, Any]:
