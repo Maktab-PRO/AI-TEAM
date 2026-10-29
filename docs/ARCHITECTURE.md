@@ -38,6 +38,12 @@ Notion: human-readable decisions, runbooks, architecture pages; not authoritativ
 - Human reference docs and decision records: Notion can be used after a deliberate integration; not a substitute for audit state.
 - Redis: asynchronous message transport/cache only. Do not use it as the sole record of a task or project.
 
+## Process health probes
+
+- `GET /live` is a minimal process-liveness probe. It returns only `status=alive` and the service marker. It deliberately bypasses the database-backed application rate limiter and does not query PostgreSQL, SQLite, the registry, or the audit chain, so a database outage does not make a running process appear dead.
+- `GET /health` remains the compatibility/readiness-style probe. It reads and verifies the audit chain and reports the configured database backend and chain validity; it therefore depends on the database being available and may fail when storage is unavailable.
+- Because `/live` is not protected by the database-backed limiter, any deployed service must still have private/authenticated ingress and appropriate infrastructure-level traffic controls. Never make the broader API, OpenAPI documentation, or database-backed health details publicly accessible as a substitute for ingress controls.
+
 ## State machine
 
 `queued → claimed → in_progress → evidence_pending → verified`
