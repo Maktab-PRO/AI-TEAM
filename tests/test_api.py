@@ -37,6 +37,26 @@ def valid_task_payload(**changes):
     return payload
 
 
+def test_live_endpoint_remains_available_when_database_rate_limit_store_is_unavailable(
+    monkeypatch, system
+):
+    client = setup_api(monkeypatch, system)
+    _, store, _, _ = system
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("database intentionally unavailable for liveness test")
+
+    monkeypatch.setattr(store, "consume_rate_limit", unavailable)
+
+    response = client.get("/live")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "alive",
+        "service": "ai-team-control-plane",
+    }
+
+
 def test_api_requires_actor_and_creates_task_with_idempotency(monkeypatch, system):
     client = setup_api(monkeypatch, system)
     no_actor = client.get("/projects")
