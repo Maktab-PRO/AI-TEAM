@@ -194,8 +194,13 @@ def _validated_principal(value: Any) -> dict[str, Any]:
     elif "*" in projects:
         raise HTTPException(status_code=503, detail="Only platform_admin may use the global projects scope.")
     for project_id in projects:
-        if project_id != "*" and registry.get(project_id) is None:
+        if project_id == "*":
+            continue
+        project = registry.get(project_id)
+        if project is None:
             raise HTTPException(status_code=503, detail=f"Token policy references unknown project ID: {project_id}.")
+        if project.status != "active":
+            raise HTTPException(status_code=503, detail=f"Token policy references inactive project ID: {project_id}.")
     return {"actor": actor, "role": role, "projects": projects}
 
 
