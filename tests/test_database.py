@@ -31,6 +31,26 @@ def test_production_fails_closed_without_postgresql_database_url(monkeypatch, tm
     assert not db_path.exists()
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "",
+        "?sslmode=disable",
+        "?sslmode=prefer",
+        "?sslmode=require&sslmode=disable",
+    ],
+)
+def test_production_rejects_missing_or_unsafe_database_tls(monkeypatch, query):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://control-plane:synthetic-password@db.example.invalid/ai_team" + query,
+    )
+
+    with pytest.raises(RuntimeError, match="sslmode=require, verify-ca, or verify-full"):
+        database.create_store()
+
+
 def test_production_selects_postgresql_backend(monkeypatch):
     import ai_team_control_plane.postgres_store as postgres_module
 
